@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 
-import psycopg2
-import psycopg2.extras
+import psycopg
+from psycopg.rows import dict_row
 
 from app.config import settings
 
@@ -9,20 +9,19 @@ from app.config import settings
 def get_connection():
     if not settings.DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not set")
-    return psycopg2.connect(settings.DATABASE_URL)
+    return psycopg.connect(settings.DATABASE_URL, row_factory=dict_row)
 
 
 @contextmanager
 def db_cursor(commit: bool = False):
     conn = get_connection()
     try:
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        yield cursor
+        with conn.cursor() as cursor:
+            yield cursor
         if commit:
             conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
-        cursor.close()
         conn.close()
