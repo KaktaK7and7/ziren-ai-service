@@ -34,9 +34,9 @@ class ChatService:
             return row["id"]
 
 
-        @staticmethod
-        def get_last_session_messages(user_id: int) -> dict:
-            with db_cursor() as cur:
+    @staticmethod
+    def get_last_session_messages(user_id: int) -> dict:
+        with db_cursor() as cur:
                 cur.execute(
                     """
                     SELECT id
