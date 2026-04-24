@@ -33,52 +33,51 @@ class ChatService:
             row = cur.fetchone()
             return row["id"]
 
-
     @staticmethod
     def get_last_session_messages(user_id: int) -> dict:
         with db_cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id
-                    FROM ai_chat_sessions
-                    WHERE user_id = %s
-                    ORDER BY updated_at DESC, id DESC
-                    LIMIT 1
-                    """,
-                    (user_id,),
-                )
-                session_row = cur.fetchone()
+            cur.execute(
+                """
+                SELECT id
+                FROM ai_chat_sessions
+                WHERE user_id = %s
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            session_row = cur.fetchone()
 
-                if not session_row:
-                    return {
-                        "session_id": 0,
-                        "messages": []
-                    }
-
-                session_id = session_row["id"]
-
-                cur.execute(
-                    """
-                    SELECT role, content, created_at
-                    FROM ai_chat_messages
-                    WHERE session_id = %s
-                    ORDER BY id ASC
-                    """,
-                    (session_id,),
-                )
-                rows = cur.fetchall()
-
+            if not session_row:
                 return {
-                    "session_id": session_id,
-                    "messages": [
-                        {
-                            "role": row["role"],
-                            "content": row["content"],
-                            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-                        }
-                        for row in rows
-                    ]
+                    "session_id": 0,
+                    "messages": []
                 }
+
+            session_id = session_row["id"]
+
+            cur.execute(
+                """
+                SELECT role, content, created_at
+                FROM ai_chat_messages
+                WHERE session_id = %s
+                ORDER BY id ASC
+                """,
+                (session_id,),
+            )
+            rows = cur.fetchall()
+
+            return {
+                "session_id": session_id,
+                "messages": [
+                    {
+                        "role": row["role"],
+                        "content": row["content"],
+                        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                    }
+                    for row in rows
+                ]
+            }
 
     @staticmethod
     def get_recent_messages(session_id: int, limit: int = 8) -> List[Dict[str, Any]]:
@@ -138,10 +137,21 @@ class ChatService:
 {chr(10).join("- " + x for x in persona.get("speech_habits", []))}
 
 Важно:
+- у тебя есть долгосрочная память пользователя, она передаётся ниже в специальных блоках
+- считай память достоверной, если она есть
+- если пользователь спрашивает, что ты помнишь, отвечай по блокам памяти
+- не говори, что у тебя нет долгосрочной памяти
+- не выдумывай факты, которых нет в памяти
+- если пользователь сообщает важный факт, можешь естественно сказать, что учтёшь/запомнишь это
+- фактическое сохранение выполняет система памяти
+
+- твоё имя может быть изменено пользователем
+- всегда используй имя из persona.name
+- никогда не спорь о своём имени
+- если имя изменено — сразу используй новое
+
 - будь последовательной в характере
-- не выдумывай факты
 - если чего-то не знаешь, говори честно
-- учитывай память о пользователе только когда она реально есть
 """.strip()
 
     @staticmethod
@@ -149,8 +159,10 @@ class ChatService:
         profile = memory_row.get("profile") or {}
         preferences = memory_row.get("preferences") or {}
         relationship_rules = memory_row.get("relationship_rules") or {}
+        entities = memory_row.get("entities") or {}
         interests = memory_row.get("interests") or []
         projects = memory_row.get("projects") or []
+        long_term_notes = memory_row.get("long_term_notes") or []
 
         lines = []
 
@@ -172,6 +184,47 @@ class ChatService:
                 if v:
                     lines.append(f"- {k}: {v}")
 
+        pets = entities.get("pets") or []
+        vehicles = entities.get("vehicles") or []
+        people = entities.get("people") or []
+        other = entities.get("other") or []
+
+        if pets:
+            lines.append("Питомцы:")
+            for pet in pets[:10]:
+                if isinstance(pet, dict):
+                    parts = []
+                    if pet.get("type"):
+                        parts.append(str(pet.get("type")))
+                    if pet.get("name"):
+                        parts.append(str(pet.get("name")))
+                    if pet.get("color"):
+                        parts.append(f"цвет: {pet.get('color')}")
+                    lines.append("- " + ", ".join(parts))
+                else:
+                    lines.append(f"- {pet}")
+
+        if vehicles:
+            lines.append("Транспорт:")
+            for vehicle in vehicles[:10]:
+                if isinstance(vehicle, dict):
+                    lines.append(f"- {vehicle.get('name') or vehicle}")
+                else:
+                    lines.append(f"- {vehicle}")
+
+        if people:
+            lines.append("Важные люди:")
+            for person in people[:10]:
+                if isinstance(person, dict):
+                    lines.append(f"- {person.get('name') or person}")
+                else:
+                    lines.append(f"- {person}")
+
+        if other:
+            lines.append("Другие сущности:")
+            for item in other[:10]:
+                lines.append(f"- {item}")
+
         if interests:
             lines.append("Интересы:")
             for item in interests[:10]:
@@ -182,7 +235,26 @@ class ChatService:
             for item in projects[:10]:
                 lines.append(f"- {item}")
 
+        if long_term_notes:
+            lines.append("Важные заметки:")
+            for item in long_term_notes[:10]:
+                lines.append(f"- {item}")
+
         return "\n".join(lines).strip() or "Пока нет сохранённых данных."
+
+    @staticmethod
+    def build_relevant_memory_block(items: List[Dict[str, Any]]) -> str:
+        if not items:
+            return "Нет релевантных воспоминаний по текущей теме."
+
+        lines = []
+        for item in items[:8]:
+            category = item.get("category", "general")
+            content = item.get("content", "")
+            importance = item.get("importance", 0.5)
+            lines.append(f"- [{category}, важность {importance}] {content}")
+
+        return "\n".join(lines)
 
     @staticmethod
     def save_metrics(
@@ -212,7 +284,7 @@ class ChatService:
                 ),
             )
 
-    @staticmethod   
+    @staticmethod
     def chat(user_id: int, message: str, session_id: int | None = None) -> Tuple[str, int, bool, bool, List[str], int]:
         import time
 
@@ -242,17 +314,24 @@ class ChatService:
         t5 = time.perf_counter()
         print(f"[TIMING] memory_update={(t5 - t4):.3f}s")
 
+        relevant_memories = MemoryService.retrieve_relevant_memories(user_id, message, limit=8)
+        t5b = time.perf_counter()
+        print(f"[TIMING] relevant_memory_load={(t5b - t5):.3f}s | count={len(relevant_memories)}")
+
         recent_messages = ChatService.get_recent_messages(actual_session_id, limit=8)
         t6 = time.perf_counter()
-        print(f"[TIMING] recent_messages_load={(t6 - t5):.3f}s | count={len(recent_messages)}")
+        print(f"[TIMING] recent_messages_load={(t6 - t5b):.3f}s | count={len(recent_messages)}")
 
         messages = [
             {"role": "system", "content": ChatService.build_system_prompt(persona)},
             {
                 "role": "developer",
                 "content": f"""
-[Память о пользователе]
+[Долгосрочная память пользователя]
 {ChatService.build_memory_block(memory_row)}
+
+[Релевантные воспоминания по текущей теме]
+{ChatService.build_relevant_memory_block(relevant_memories)}
 
 [Краткое summary прошлых разговоров]
 {summary_text or 'Пока нет summary.'}
