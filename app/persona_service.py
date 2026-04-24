@@ -40,6 +40,20 @@ class PersonaService:
             if not row:
                 return PersonaService.ensure_persona(user_id)
             return dict(row)
+        
+
+    @staticmethod
+    def update_name(user_id: int, name: str):
+        with db_cursor() as cur:
+            cur.execute("""
+                UPDATE ai_personas
+                SET name = %s, updated_at = NOW()
+                WHERE user_id = %s
+                RETURNING *
+            """, (name, user_id))
+
+            return cur.fetchone()
+
 
     @staticmethod
     def apply_preset(user_id: int, preset_name: str) -> Dict[str, Any]:

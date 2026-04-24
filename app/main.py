@@ -15,6 +15,13 @@ def health():
     return HealthResponse(status="ok", app=settings.APP_NAME)
 
 
+@app.post("/persona/{user_id}/name")
+def update_name(user_id: int, data: dict):
+    try:
+        return PersonaService.update_name(user_id, data["name"])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest):
     try:
