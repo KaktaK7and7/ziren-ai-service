@@ -18,7 +18,6 @@ class OpenAIService:
         response = client.responses.create(
             model=model,
             input=messages,
-            response_format={"type": "json_object"},
         )
 
         print("[OpenAI][JSON] response received")
