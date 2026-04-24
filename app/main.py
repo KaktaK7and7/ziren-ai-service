@@ -42,6 +42,14 @@ def get_persona(user_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/messages/{user_id}")
+def get_messages(user_id: int):
+    try:
+        return ChatService.get_last_session_messages(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/persona/{user_id}/preset")
 def apply_persona_preset(user_id: int, payload: PersonaPresetRequest):
     try:

@@ -33,6 +33,53 @@ class ChatService:
             row = cur.fetchone()
             return row["id"]
 
+
+        @staticmethod
+        def get_last_session_messages(user_id: int) -> dict:
+            with db_cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM ai_chat_sessions
+                    WHERE user_id = %s
+                    ORDER BY updated_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (user_id,),
+                )
+                session_row = cur.fetchone()
+
+                if not session_row:
+                    return {
+                        "session_id": 0,
+                        "messages": []
+                    }
+
+                session_id = session_row["id"]
+
+                cur.execute(
+                    """
+                    SELECT role, content, created_at
+                    FROM ai_chat_messages
+                    WHERE session_id = %s
+                    ORDER BY id ASC
+                    """,
+                    (session_id,),
+                )
+                rows = cur.fetchall()
+
+                return {
+                    "session_id": session_id,
+                    "messages": [
+                        {
+                            "role": row["role"],
+                            "content": row["content"],
+                            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                        }
+                        for row in rows
+                    ]
+                }
+
     @staticmethod
     def get_recent_messages(session_id: int, limit: int = 8) -> List[Dict[str, Any]]:
         with db_cursor() as cur:
