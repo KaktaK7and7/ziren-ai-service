@@ -155,7 +155,16 @@ class MemoryService:
             )
             row = cur.fetchone()
 
-        return dict(row)
+        item = dict(row)
+        if item.get("status") == "active":
+            updated_memory, structured_changed, _ = MemoryService.apply_ai_items_to_structured_memory(
+                MemoryService.ensure_memory(user_id),
+                [item],
+            )
+            if structured_changed:
+                MemoryService.save_structured_memory(user_id, updated_memory)
+
+        return item
 
     @staticmethod
     def update_memory_item(user_id: int, item_id: int, data: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -201,7 +210,12 @@ class MemoryService:
             )
             row = cur.fetchone()
 
-        return dict(row) if row else None
+        if not row:
+            return None
+
+        item = dict(row)
+        MemoryService.rebuild_structured_memory_from_items(user_id)
+        return item
 
     @staticmethod
     def delete_memory_item(user_id: int, item_id: int) -> bool:
@@ -220,7 +234,11 @@ class MemoryService:
             )
             row = cur.fetchone()
 
-        return bool(row)
+        deleted = bool(row)
+        if deleted:
+            MemoryService.rebuild_structured_memory_from_items(user_id)
+
+        return deleted
 
     @staticmethod
     def should_run_ai_memory_analysis(message: str, regex_changed: bool) -> bool:
@@ -582,8 +600,82 @@ class MemoryService:
             )
 
     @staticmethod
+    def rebuild_structured_memory_from_items(user_id: int) -> Tuple[Dict[str, Any], bool, List[str]]:
+        current_memory = MemoryService.ensure_memory(user_id)
+        current_profile = current_memory.get("profile") or {}
+
+        active_items = MemoryService.list_memory_items(user_id)
+        item_categories = {
+            normalize_text(item.get("category", ""))
+            for item in active_items
+            if normalize_text(item.get("category", ""))
+        }
+
+        rebuilt_memory = {
+            **current_memory,
+            "profile": {},
+            "preferences": {},
+            "relationship_rules": {},
+            "entities": json.loads(json.dumps(DEFAULT_MEMORY["entities"], ensure_ascii=False)),
+            "interests": [],
+            "projects": [],
+            "long_term_notes": [],
+        }
+
+        updated_memory, _, logs = MemoryService.apply_ai_items_to_structured_memory(
+            rebuilt_memory,
+            active_items,
+        )
+
+        profile = updated_memory.get("profile") or {}
+        preserve_logs: List[str] = []
+        for key in ["name", "language"]:
+            if key not in profile and f"profile.{key}" not in item_categories and current_profile.get(key):
+                profile[key] = current_profile[key]
+                preserve_logs.append(f"profile.{key} preserved")
+
+        updated_memory["profile"] = profile
+
+        changed = any(
+            (current_memory.get(field) or DEFAULT_MEMORY.get(field)) != updated_memory.get(field)
+            for field in [
+                "profile",
+                "preferences",
+                "relationship_rules",
+                "entities",
+                "interests",
+                "projects",
+                "long_term_notes",
+            ]
+        )
+
+        if changed:
+            MemoryService.save_structured_memory(user_id, updated_memory)
+
+        return updated_memory, changed, logs + preserve_logs
+
+    @staticmethod
     def retrieve_relevant_memories(user_id: int, message: str, limit: int = 8) -> List[Dict[str, Any]]:
         text = normalize_text(message).lower()
+        memory_query = any(
+            phrase in text
+            for phrase in [
+                "что ты помнишь",
+                "что помнишь",
+                "что ты знаешь обо мне",
+                "что знаешь обо мне",
+                "память",
+                "мои факты",
+                "мои данные",
+                "мои воспоминания",
+                "покажи память",
+                "покажи факты",
+                "РїР°РјСЏС‚СЊ",
+                "РјРѕРё С„Р°РєС‚С‹",
+                "РјРѕРё РґР°РЅРЅС‹Рµ",
+            ]
+        )
+        effective_limit = max(limit, 20) if memory_query else limit
 
         category_hints = []
         if any(x in text for x in ["кот", "кошка", "питом", "животн"]):
@@ -602,33 +694,85 @@ class MemoryService:
             category_hints.extend(["profile.name", "profile.city", "entities.pets", "projects", "interests", "long_term_notes"])
 
         with db_cursor(commit=True) as cur:
-            if category_hints:
+            if memory_query:
                 cur.execute(
                     """
                     SELECT id, type, category, content, importance, confidence, sensitivity, created_at
                     FROM ai_memory_items
                     WHERE user_id = %s
                       AND status = 'active'
-                      AND category = ANY(%s)
                     ORDER BY importance DESC, updated_at DESC
                     LIMIT %s
                     """,
-                    (user_id, category_hints, limit),
+                    (user_id, effective_limit),
                 )
+                rows = cur.fetchall()
+            elif category_hints:
+                cur.execute(
+                    """
+                    SELECT id, type, category, content, importance, confidence, sensitivity, created_at
+                    FROM ai_memory_items
+                    WHERE user_id = %s
+                      AND status = 'active'
+                      AND (category = ANY(%s) OR category = 'general')
+                    ORDER BY importance DESC, updated_at DESC
+                    LIMIT %s
+                    """,
+                    (user_id, category_hints, effective_limit),
+                )
+                rows = cur.fetchall()
             else:
-                cur.execute(
-                    """
-                    SELECT id, type, category, content, importance, confidence, sensitivity, created_at
-                    FROM ai_memory_items
-                    WHERE user_id = %s
-                      AND status = 'active'
-                    ORDER BY importance DESC, updated_at DESC
-                    LIMIT %s
-                    """,
-                    (user_id, limit),
-                )
+                keywords = [
+                    word
+                    for word in re.findall(r"[A-Za-zА-Яа-яЁё0-9]{3,}", text)
+                    if word not in {
+                        "что",
+                        "как",
+                        "где",
+                        "про",
+                        "мне",
+                        "тебя",
+                        "это",
+                        "мои",
+                        "мой",
+                        "моя",
+                        "the",
+                        "and",
+                        "for",
+                        "with",
+                    }
+                ][:8]
 
-            rows = cur.fetchall()
+                rows = []
+                if keywords:
+                    conditions = " OR ".join(["content ILIKE %s"] * len(keywords))
+                    cur.execute(
+                        f"""
+                        SELECT id, type, category, content, importance, confidence, sensitivity, created_at
+                        FROM ai_memory_items
+                        WHERE user_id = %s
+                          AND status = 'active'
+                          AND ({conditions})
+                        ORDER BY importance DESC, updated_at DESC
+                        LIMIT %s
+                        """,
+                        tuple([user_id, *[f"%{word}%" for word in keywords], effective_limit]),
+                    )
+                    rows = cur.fetchall()
+
+                if not rows:
+                    cur.execute(
+                        """
+                        SELECT id, type, category, content, importance, confidence, sensitivity, created_at
+                        FROM ai_memory_items
+                        WHERE user_id = %s
+                          AND status = 'active'
+                        ORDER BY importance DESC, updated_at DESC
+                        LIMIT %s
+                        """,
+                        (user_id, effective_limit),
+                    )
+                    rows = cur.fetchall()
 
             ids = [row["id"] for row in rows]
             if ids:

@@ -248,7 +248,7 @@ class ChatService:
             return "Нет релевантных воспоминаний по текущей теме."
 
         lines = []
-        for item in items[:8]:
+        for item in items[:20]:
             category = item.get("category", "general")
             content = item.get("content", "")
             importance = item.get("importance", 0.5)
@@ -332,6 +332,8 @@ class ChatService:
 
 [Релевантные воспоминания по текущей теме]
 {ChatService.build_relevant_memory_block(relevant_memories)}
+
+Если пользователь спрашивает о памяти, используй оба источника выше: структурированную долгосрочную память и релевантные memory items, включая ручные факты.
 
 [Краткое summary прошлых разговоров]
 {summary_text or 'Пока нет summary.'}
