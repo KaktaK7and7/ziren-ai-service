@@ -25,7 +25,9 @@ def health():
 @app.post("/persona/{user_id}/name")
 def update_name(user_id: int, data: dict):
     try:
-        return PersonaService.update_name(user_id, data["name"])
+        return PersonaService.update_name(user_id, data.get("name", ""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -78,6 +80,22 @@ def apply_persona_preset(user_id: int, payload: PersonaPresetRequest):
 def get_memory(user_id: int):
     try:
         return MemoryService.ensure_memory(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/memory/{user_id}/clear")
+def clear_memory(user_id: int):
+    try:
+        return MemoryService.clear_all_memory(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/memory/{user_id}/all")
+def delete_all_memory(user_id: int):
+    try:
+        return MemoryService.clear_all_memory(user_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

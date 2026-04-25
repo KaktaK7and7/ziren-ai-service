@@ -44,7 +44,13 @@ class PersonaService:
 
     @staticmethod
     def update_name(user_id: int, name: str):
-        with db_cursor() as cur:
+        name = str(name).strip()
+        if not name:
+            raise ValueError("name is required")
+
+        PersonaService.ensure_persona(user_id)
+
+        with db_cursor(commit=True) as cur:
             cur.execute("""
                 UPDATE ai_personas
                 SET name = %s, updated_at = NOW()
@@ -71,7 +77,6 @@ class PersonaService:
                 VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, NOW())
                 ON CONFLICT (user_id) DO UPDATE SET
                     preset_name = EXCLUDED.preset_name,
-                    name = EXCLUDED.name,
                     identity = EXCLUDED.identity,
                     core_traits = EXCLUDED.core_traits,
                     speech_style = EXCLUDED.speech_style,

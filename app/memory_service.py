@@ -40,6 +40,59 @@ def list_has_text(items: List[Any], text: str) -> bool:
     return False
 
 
+def clone_default_memory() -> Dict[str, Any]:
+    return json.loads(json.dumps(DEFAULT_MEMORY, ensure_ascii=False))
+
+
+def classify_memory_category(category: str, content: str) -> str:
+    category = normalize_text(category or "general") or "general"
+    text = normalize_text(content).lower()
+
+    if category != "general":
+        return category
+
+    if "меня зовут" in text or "имя:" in text:
+        return "profile.name"
+    if "я говорю" in text or "язык" in text:
+        return "profile.language"
+    if "я живу" in text or "город" in text:
+        return "profile.city"
+    if any(word in text for word in ["машин", "автомоб", "велосипед", "мотоцикл", "самокат"]):
+        return "entities.vehicles"
+    if any(word in text for word in ["кот", "кошк", "собак", "питомец", "питомц"]):
+        return "entities.pets"
+
+    return category
+
+
+def extract_profile_value(key: str, content: str) -> str:
+    value = normalize_text(content)
+
+    patterns = {
+        "name": [
+            r"(?:меня зовут|мо[её]\s+имя|имя:)\s*([A-Za-zА-Яа-яЁё\-]{2,80})",
+            r"(?:пользователя зовут|пользователь\s+)\s*([A-Za-zА-Яа-яЁё\-]{2,80})",
+        ],
+        "city": [
+            r"(?:я живу в|я переехал в|я переехала в|мой город|город:|жив[её]т в)\s*([A-Za-zА-Яа-яЁё\-\s]{2,80})",
+        ],
+        "language": [
+            r"(?:я говорю на|я говорю по|мой язык|язык:|говорит на|говорит по)\s*([A-Za-zА-Яа-яЁё\-]{2,80})",
+        ],
+    }
+
+    for pattern in patterns.get(key, []):
+        match = re.search(pattern, value, re.IGNORECASE)
+        if match:
+            value = match.group(1)
+            break
+    else:
+        value = re.sub(r"^Пользователь\s+", "", value, flags=re.IGNORECASE)
+        value = re.sub(r"^(живёт в|живет в|говорит на|говорит по|работает в|работает как|зовут)\s+", "", value, flags=re.IGNORECASE)
+
+    return capitalize_first(value.strip(" .,!?:;"))
+
+
 def entity_exists(items: List[Dict[str, Any]], name: str) -> bool:
     target = normalize_text(name).lower()
     for item in items:
@@ -121,7 +174,7 @@ class MemoryService:
             raise ValueError("content is required")
 
         item_type = normalize_text(data.get("type", "semantic")) or "semantic"
-        category = normalize_text(data.get("category", "general")) or "general"
+        category = classify_memory_category(data.get("category", "general"), content)
         source_message = data.get("source_message")
         source_message = normalize_text(source_message) if source_message is not None else None
         sensitivity = normalize_text(data.get("sensitivity", "normal")) or "normal"
@@ -157,12 +210,7 @@ class MemoryService:
 
         item = dict(row)
         if item.get("status") == "active":
-            updated_memory, structured_changed, _ = MemoryService.apply_ai_items_to_structured_memory(
-                MemoryService.ensure_memory(user_id),
-                [item],
-            )
-            if structured_changed:
-                MemoryService.save_structured_memory(user_id, updated_memory)
+            MemoryService.rebuild_structured_memory_from_items(user_id)
 
         return item
 
@@ -239,6 +287,49 @@ class MemoryService:
             MemoryService.rebuild_structured_memory_from_items(user_id)
 
         return deleted
+
+    @staticmethod
+    def clear_all_memory(user_id: int) -> Dict[str, bool]:
+        empty_memory = clone_default_memory()
+        MemoryService.ensure_memory(user_id)
+
+        with db_cursor(commit=True) as cur:
+            cur.execute(
+                """
+                UPDATE ai_memory_items
+                SET status = 'deleted',
+                    updated_at = NOW()
+                WHERE user_id = %s
+                  AND status <> 'deleted'
+                """,
+                (user_id,),
+            )
+            cur.execute(
+                """
+                UPDATE ai_user_memory
+                SET profile = %s::jsonb,
+                    preferences = %s::jsonb,
+                    relationship_rules = %s::jsonb,
+                    entities = %s::jsonb,
+                    interests = %s::jsonb,
+                    projects = %s::jsonb,
+                    long_term_notes = %s::jsonb,
+                    updated_at = NOW()
+                WHERE user_id = %s
+                """,
+                (
+                    json.dumps(empty_memory["profile"], ensure_ascii=False),
+                    json.dumps(empty_memory["preferences"], ensure_ascii=False),
+                    json.dumps(empty_memory["relationship_rules"], ensure_ascii=False),
+                    json.dumps(empty_memory["entities"], ensure_ascii=False),
+                    json.dumps(empty_memory["interests"], ensure_ascii=False),
+                    json.dumps(empty_memory["projects"], ensure_ascii=False),
+                    json.dumps(empty_memory["long_term_notes"], ensure_ascii=False),
+                    user_id,
+                ),
+            )
+
+        return {"ok": True}
 
     @staticmethod
     def should_run_ai_memory_analysis(message: str, regex_changed: bool) -> bool:
@@ -395,7 +486,7 @@ class MemoryService:
                 if not content:
                     continue
 
-                category = normalize_text(item.get("category", "general")) or "general"
+                category = classify_memory_category(item.get("category", "general"), content)
 
                 cur.execute(
                     """
@@ -459,7 +550,7 @@ class MemoryService:
         logs: List[str] = []
 
         for item in items:
-            category = normalize_text(item.get("category", ""))
+            category = classify_memory_category(item.get("category", ""), item.get("content", ""))
             content = normalize_text(item.get("content", ""))
 
             if not content:
@@ -503,10 +594,7 @@ class MemoryService:
             elif category.startswith("profile."):
                 key = category.split(".", 1)[1]
                 if key in ["name", "city", "language", "work", "job"]:
-                    value = content
-                    value = re.sub(r"^Пользователь\s+", "", value, flags=re.IGNORECASE)
-                    value = re.sub(r"^(живёт в|говорит на|говорит по|работает в|работает как|зовут)\s+", "", value, flags=re.IGNORECASE)
-                    value = capitalize_first(value)
+                    value = extract_profile_value(key, content)
                     if value and profile.get(key) != value:
                         profile[key] = value
                         changed = True
@@ -602,21 +690,15 @@ class MemoryService:
     @staticmethod
     def rebuild_structured_memory_from_items(user_id: int) -> Tuple[Dict[str, Any], bool, List[str]]:
         current_memory = MemoryService.ensure_memory(user_id)
-        current_profile = current_memory.get("profile") or {}
 
         active_items = MemoryService.list_memory_items(user_id)
-        item_categories = {
-            normalize_text(item.get("category", ""))
-            for item in active_items
-            if normalize_text(item.get("category", ""))
-        }
 
         rebuilt_memory = {
             **current_memory,
             "profile": {},
             "preferences": {},
             "relationship_rules": {},
-            "entities": json.loads(json.dumps(DEFAULT_MEMORY["entities"], ensure_ascii=False)),
+            "entities": clone_default_memory()["entities"],
             "interests": [],
             "projects": [],
             "long_term_notes": [],
@@ -626,15 +708,6 @@ class MemoryService:
             rebuilt_memory,
             active_items,
         )
-
-        profile = updated_memory.get("profile") or {}
-        preserve_logs: List[str] = []
-        for key in ["name", "language"]:
-            if key not in profile and f"profile.{key}" not in item_categories and current_profile.get(key):
-                profile[key] = current_profile[key]
-                preserve_logs.append(f"profile.{key} preserved")
-
-        updated_memory["profile"] = profile
 
         changed = any(
             (current_memory.get(field) or DEFAULT_MEMORY.get(field)) != updated_memory.get(field)
@@ -652,7 +725,7 @@ class MemoryService:
         if changed:
             MemoryService.save_structured_memory(user_id, updated_memory)
 
-        return updated_memory, changed, logs + preserve_logs
+        return updated_memory, changed, logs
 
     @staticmethod
     def retrieve_relevant_memories(user_id: int, message: str, limit: int = 8) -> List[Dict[str, Any]]:
@@ -804,6 +877,7 @@ class MemoryService:
 
         changed = False
         logs: List[str] = []
+        regex_items: List[Dict[str, Any]] = []
         low = normalize_text(message).lower()
 
         m = re.search(r"(?:меня зовут|мо[её] имя)\s+([A-Za-zА-Яа-яЁё\-]{2,40})", low, re.IGNORECASE)
@@ -812,6 +886,7 @@ class MemoryService:
             if profile.get("name") != name:
                 profile["name"] = name
                 changed = True
+                regex_items.append({"type": "semantic", "category": "profile.name", "content": f"Меня зовут {name}", "importance": 0.8, "confidence": 0.95})
                 logs.append(f"profile.name = {name}")
 
         m = re.search(r"(?:я живу в|я переехал в|я переехала в|мой город)\s+([A-Za-zА-Яа-яЁё\-\s]{2,60})", low, re.IGNORECASE)
@@ -820,6 +895,7 @@ class MemoryService:
             if profile.get("city") != city:
                 profile["city"] = city
                 changed = True
+                regex_items.append({"type": "semantic", "category": "profile.city", "content": f"Я живу в {city}", "importance": 0.8, "confidence": 0.95})
                 logs.append(f"profile.city = {city}")
 
         m = re.search(r"(?:я говорю на|я говорю по|мой язык)\s+([A-Za-zА-Яа-яЁё\-]{2,40})", low, re.IGNORECASE)
@@ -828,6 +904,7 @@ class MemoryService:
             if profile.get("language") != language:
                 profile["language"] = language
                 changed = True
+                regex_items.append({"type": "semantic", "category": "profile.language", "content": f"Я говорю на {language}", "importance": 0.8, "confidence": 0.95})
                 logs.append(f"profile.language = {language}")
 
         m = re.search(
@@ -847,6 +924,10 @@ class MemoryService:
             if not entity_exists(entities["pets"], pet_name):
                 entities["pets"].append(pet)
                 changed = True
+                pet_content = f"{pet_type} {pet_name}"
+                if pet_color:
+                    pet_content = f"{pet_content}, {pet_color}"
+                regex_items.append({"type": "semantic", "category": "entities.pets", "content": pet_content, "importance": 0.7, "confidence": 0.9})
                 logs.append(f"entities.pets += {pet}")
 
         m = re.search(r"(?:у меня|моя машина|мой автомобиль)\s+(?:есть\s+)?([A-Za-zА-Яа-яЁё0-9\-\s]{2,80})", low, re.IGNORECASE)
@@ -856,6 +937,7 @@ class MemoryService:
             if vehicle_name and not entity_exists(entities["vehicles"], vehicle_name):
                 entities["vehicles"].append(vehicle)
                 changed = True
+                regex_items.append({"type": "semantic", "category": "entities.vehicles", "content": vehicle_name, "importance": 0.7, "confidence": 0.9})
                 logs.append(f"entities.vehicles += {vehicle_name}")
 
         for pattern in [
@@ -870,6 +952,7 @@ class MemoryService:
                 if interest and not list_has_text(interests, interest):
                     interests.append(interest)
                     changed = True
+                    regex_items.append({"type": "semantic", "category": "interests", "content": interest, "importance": 0.6, "confidence": 0.85})
                     logs.append(f"interests += {interest}")
                 break
 
@@ -886,15 +969,17 @@ class MemoryService:
                 if project and not list_has_text(projects, project):
                     projects.append(project)
                     changed = True
+                    regex_items.append({"type": "semantic", "category": "projects", "content": project, "importance": 0.7, "confidence": 0.85})
                     logs.append(f"projects += {project}")
                 break
 
-        if changed:
-            memory_row["profile"] = profile
-            memory_row["interests"] = interests
-            memory_row["projects"] = projects
-            memory_row["entities"] = entities
-            MemoryService.save_structured_memory(user_id, memory_row)
+        if regex_items:
+            regex_items_changed, regex_item_logs = MemoryService.save_memory_items(user_id, regex_items, message)
+            _, structured_changed, structured_logs = MemoryService.rebuild_structured_memory_from_items(user_id)
+            if regex_items_changed or structured_changed:
+                changed = True
+                logs.extend(regex_item_logs)
+                logs.extend(structured_logs)
 
         if MemoryService.should_run_ai_memory_analysis(message, changed):
             ai_result = MemoryService.extract_memory_with_ai(user_id, message)
@@ -902,13 +987,7 @@ class MemoryService:
 
             if items:
                 ai_items_changed, ai_item_logs = MemoryService.save_memory_items(user_id, items, message)
-                updated_memory, structured_changed, structured_logs = MemoryService.apply_ai_items_to_structured_memory(
-                    MemoryService.get_memory(user_id),
-                    items,
-                )
-
-                if structured_changed:
-                    MemoryService.save_structured_memory(user_id, updated_memory)
+                _, structured_changed, structured_logs = MemoryService.rebuild_structured_memory_from_items(user_id)
 
                 if ai_items_changed or structured_changed:
                     changed = True
