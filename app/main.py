@@ -4,7 +4,14 @@ from app.chat_service import ChatService
 from app.config import settings
 from app.persona_service import PersonaService
 from app.memory_service import MemoryService
-from app.schemas import ChatRequest, ChatResponse, HealthResponse, PersonaPresetRequest
+from app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    HealthResponse,
+    MemoryItemCreateRequest,
+    MemoryItemUpdateRequest,
+    PersonaPresetRequest,
+)
 
 
 app = FastAPI(title=settings.APP_NAME)
@@ -71,5 +78,58 @@ def apply_persona_preset(user_id: int, payload: PersonaPresetRequest):
 def get_memory(user_id: int):
     try:
         return MemoryService.ensure_memory(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/memory-items/{user_id}")
+def list_memory_items(user_id: int):
+    try:
+        return MemoryService.list_memory_items(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/memory-items/{user_id}")
+def create_memory_item(user_id: int, payload: MemoryItemCreateRequest):
+    try:
+        return MemoryService.create_memory_item(
+            user_id,
+            payload.model_dump(),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/memory-items/{user_id}/{item_id}")
+def update_memory_item(user_id: int, item_id: int, payload: MemoryItemUpdateRequest):
+    try:
+        item = MemoryService.update_memory_item(
+            user_id,
+            item_id,
+            payload.model_dump(exclude_unset=True),
+        )
+        if not item:
+            raise HTTPException(status_code=404, detail="memory item not found")
+        return item
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/memory-items/{user_id}/{item_id}")
+def delete_memory_item(user_id: int, item_id: int):
+    try:
+        deleted = MemoryService.delete_memory_item(user_id, item_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="memory item not found")
+        return {"deleted": True, "id": item_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

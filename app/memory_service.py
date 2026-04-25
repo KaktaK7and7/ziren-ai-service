@@ -49,6 +49,17 @@ def entity_exists(items: List[Dict[str, Any]], name: str) -> bool:
 
 
 class MemoryService:
+    MEMORY_ITEM_FIELDS = {
+        "type",
+        "category",
+        "content",
+        "source_message",
+        "importance",
+        "confidence",
+        "sensitivity",
+        "status",
+    }
+
     @staticmethod
     def ensure_memory(user_id: int) -> Dict[str, Any]:
         with db_cursor(commit=True) as cur:
@@ -82,6 +93,134 @@ class MemoryService:
             if not row:
                 return MemoryService.ensure_memory(user_id)
             return dict(row)
+
+    @staticmethod
+    def list_memory_items(user_id: int) -> List[Dict[str, Any]]:
+        with db_cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id, user_id, type, category, content, source_message,
+                    importance, confidence, sensitivity, status,
+                    created_at, updated_at, last_accessed_at, access_count
+                FROM ai_memory_items
+                WHERE user_id = %s
+                  AND status = 'active'
+                ORDER BY importance DESC, updated_at DESC, id DESC
+                """,
+                (user_id,),
+            )
+            rows = cur.fetchall()
+
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def create_memory_item(user_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+        content = normalize_text(data.get("content", ""))
+        if not content:
+            raise ValueError("content is required")
+
+        item_type = normalize_text(data.get("type", "semantic")) or "semantic"
+        category = normalize_text(data.get("category", "general")) or "general"
+        source_message = data.get("source_message")
+        source_message = normalize_text(source_message) if source_message is not None else None
+        sensitivity = normalize_text(data.get("sensitivity", "normal")) or "normal"
+        status = normalize_text(data.get("status", "active")) or "active"
+
+        with db_cursor(commit=True) as cur:
+            cur.execute(
+                """
+                INSERT INTO ai_memory_items (
+                    user_id, type, category, content, source_message,
+                    importance, confidence, sensitivity, status,
+                    created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                RETURNING
+                    id, user_id, type, category, content, source_message,
+                    importance, confidence, sensitivity, status,
+                    created_at, updated_at, last_accessed_at, access_count
+                """,
+                (
+                    user_id,
+                    item_type,
+                    category,
+                    content,
+                    source_message,
+                    float(data.get("importance", 0.5)),
+                    float(data.get("confidence", 0.8)),
+                    sensitivity,
+                    status,
+                ),
+            )
+            row = cur.fetchone()
+
+        return dict(row)
+
+    @staticmethod
+    def update_memory_item(user_id: int, item_id: int, data: Dict[str, Any]) -> Dict[str, Any] | None:
+        updates = {
+            key: value
+            for key, value in data.items()
+            if key in MemoryService.MEMORY_ITEM_FIELDS and (value is not None or key == "source_message")
+        }
+
+        if not updates:
+            raise ValueError("no fields to update")
+
+        for text_field in ["type", "category", "content", "source_message", "sensitivity", "status"]:
+            if text_field in updates and updates[text_field] is not None:
+                updates[text_field] = normalize_text(updates[text_field])
+
+        if "content" in updates and not updates["content"]:
+            raise ValueError("content cannot be empty")
+
+        assignments = []
+        values = []
+        for field in MemoryService.MEMORY_ITEM_FIELDS:
+            if field in updates:
+                assignments.append(f"{field} = %s")
+                values.append(updates[field])
+
+        values.extend([user_id, item_id])
+
+        with db_cursor(commit=True) as cur:
+            cur.execute(
+                f"""
+                UPDATE ai_memory_items
+                SET {", ".join(assignments)},
+                    updated_at = NOW()
+                WHERE user_id = %s
+                  AND id = %s
+                RETURNING
+                    id, user_id, type, category, content, source_message,
+                    importance, confidence, sensitivity, status,
+                    created_at, updated_at, last_accessed_at, access_count
+                """,
+                tuple(values),
+            )
+            row = cur.fetchone()
+
+        return dict(row) if row else None
+
+    @staticmethod
+    def delete_memory_item(user_id: int, item_id: int) -> bool:
+        with db_cursor(commit=True) as cur:
+            cur.execute(
+                """
+                UPDATE ai_memory_items
+                SET status = 'deleted',
+                    updated_at = NOW()
+                WHERE user_id = %s
+                  AND id = %s
+                  AND status <> 'deleted'
+                RETURNING id
+                """,
+                (user_id, item_id),
+            )
+            row = cur.fetchone()
+
+        return bool(row)
 
     @staticmethod
     def should_run_ai_memory_analysis(message: str, regex_changed: bool) -> bool:
