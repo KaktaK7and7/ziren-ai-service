@@ -27,15 +27,37 @@ def normalize_text(text: Any) -> str:
     return re.sub(r"\s+", " ", str(text).strip())
 
 
+def normalize_memory_content_for_dedupe(content: Any) -> str:
+    text = normalize_text(content).lower()
+
+    prefix_patterns = [
+        r"^пользователь\s+интересуется\s+",
+        r"^пользователь\s+любит\s+",
+        r"^пользователь\s+",
+        r"^меня\s+зовут\s+",
+        r"^моё\s+имя\s+",
+        r"^мое\s+имя\s+",
+    ]
+    for pattern in prefix_patterns:
+        updated = re.sub(pattern, "", text, count=1)
+        if updated != text:
+            text = updated
+            break
+
+    text = re.sub(r"[^\w\s]+", " ", text, flags=re.UNICODE)
+    text = text.replace("_", " ")
+    return normalize_text(text)
+
+
 def capitalize_first(value: str) -> str:
     value = normalize_text(value)
     return value[:1].upper() + value[1:] if value else value
 
 
 def list_has_text(items: List[Any], text: str) -> bool:
-    target = normalize_text(text).lower()
+    target = normalize_memory_content_for_dedupe(text)
     for item in items:
-        if normalize_text(item).lower() == target:
+        if normalize_memory_content_for_dedupe(item) == target:
             return True
     return False
 
@@ -94,9 +116,9 @@ def extract_profile_value(key: str, content: str) -> str:
 
 
 def entity_exists(items: List[Dict[str, Any]], name: str) -> bool:
-    target = normalize_text(name).lower()
+    target = normalize_memory_content_for_dedupe(name)
     for item in items:
-        if normalize_text(item.get("name", "")).lower() == target:
+        if normalize_memory_content_for_dedupe(item.get("name", "")) == target:
             return True
     return False
 
@@ -181,6 +203,30 @@ class MemoryService:
         status = normalize_text(data.get("status", "active")) or "active"
 
         with db_cursor(commit=True) as cur:
+            if status == "active":
+                cur.execute(
+                    """
+                    SELECT
+                        id, user_id, type, category, content, source_message,
+                        importance, confidence, sensitivity, status,
+                        created_at, updated_at, last_accessed_at, access_count
+                    FROM ai_memory_items
+                    WHERE user_id = %s
+                      AND status = 'active'
+                    ORDER BY importance DESC, updated_at DESC, id DESC
+                    """,
+                    (user_id,),
+                )
+                target_content = content.lower()
+                target_normalized = normalize_memory_content_for_dedupe(content)
+                for existing in cur.fetchall():
+                    existing_content = normalize_text(existing.get("content", ""))
+                    existing_normalized = normalize_memory_content_for_dedupe(existing_content)
+                    if existing_content.lower() == target_content or (
+                        target_normalized and existing_normalized == target_normalized
+                    ):
+                        return dict(existing)
+
             cur.execute(
                 """
                 INSERT INTO ai_memory_items (
@@ -481,6 +527,17 @@ class MemoryService:
         logs: List[str] = []
 
         with db_cursor(commit=True) as cur:
+            cur.execute(
+                """
+                SELECT content
+                FROM ai_memory_items
+                WHERE user_id = %s
+                  AND status = 'active'
+                """,
+                (user_id,),
+            )
+            active_contents = [normalize_text(row.get("content", "")) for row in cur.fetchall()]
+
             for item in items:
                 content = normalize_text(item.get("content", ""))
                 if not content:
@@ -488,18 +545,13 @@ class MemoryService:
 
                 category = classify_memory_category(item.get("category", "general"), content)
 
-                cur.execute(
-                    """
-                    SELECT id
-                    FROM ai_memory_items
-                    WHERE user_id = %s
-                      AND status = 'active'
-                      AND lower(content) = lower(%s)
-                    LIMIT 1
-                    """,
-                    (user_id, content),
+                target_content = content.lower()
+                target_normalized = normalize_memory_content_for_dedupe(content)
+                duplicate = any(
+                    existing.lower() == target_content
+                    or (target_normalized and normalize_memory_content_for_dedupe(existing) == target_normalized)
+                    for existing in active_contents
                 )
-                duplicate = cur.fetchone()
                 if duplicate:
                     continue
 
@@ -525,6 +577,7 @@ class MemoryService:
                 )
 
                 logs.append(f"memory_item += {content}")
+                active_contents.append(content)
 
         return bool(logs), logs
 
