@@ -22,6 +22,28 @@ class HealthResponse(BaseModel):
     app: str
 
 
+class AppLauncherCandidate(BaseModel):
+    index: int
+    name: str = Field(min_length=1, max_length=500)
+    type: str = Field(default="", max_length=50)
+    source: str = Field(default="", max_length=100)
+    aliases: List[str] = Field(default_factory=list)
+    appid: Optional[str] = Field(default=None, max_length=100)
+    path_basename: str = Field(default="", max_length=500)
+
+
+class AppLauncherResolveRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=1000)
+    candidates: List[AppLauncherCandidate] = Field(default_factory=list)
+
+
+class AppLauncherResolveResponse(BaseModel):
+    selected_index: Optional[int] = None
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    spoken_name: Optional[str] = None
+    reason: str = ""
+
+
 class PersonaPresetRequest(BaseModel):
     preset_name: str
 

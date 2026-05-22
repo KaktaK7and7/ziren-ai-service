@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 
 from app.chat_service import ChatService
+from app.app_launcher_service import AppLauncherService
 from app.config import settings
 from app.persona_service import PersonaService
 from app.memory_service import MemoryService
@@ -8,6 +9,8 @@ from app.schemas import (
     ChatRequest,
     ChatResponse,
     HealthResponse,
+    AppLauncherResolveRequest,
+    AppLauncherResolveResponse,
     MemoryItemCreateRequest,
     MemoryItemUpdateRequest,
     PersonaPresetRequest,
@@ -82,6 +85,11 @@ def get_memory(user_id: int):
         return MemoryService.ensure_memory(user_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/app-launcher/resolve", response_model=AppLauncherResolveResponse)
+def app_launcher_resolve(payload: AppLauncherResolveRequest):
+    return AppLauncherService.resolve(payload)
 
 
 @app.post("/memory/{user_id}/clear")
