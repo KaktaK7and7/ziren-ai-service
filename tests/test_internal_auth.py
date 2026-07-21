@@ -11,6 +11,7 @@ class InternalTokenTests(unittest.TestCase):
     def test_accepts_only_exact_token(self) -> None:
         self.assertTrue(is_valid_internal_token("secret", "secret"))
         self.assertFalse(is_valid_internal_token("secret-1", "secret-2"))
+        self.assertFalse(is_valid_internal_token("чужой", "secret"))
 
     def test_reports_missing_configuration_before_request_credentials(self) -> None:
         self.assertEqual(

@@ -11,7 +11,10 @@ def is_valid_internal_token(provided_token: str, expected_token: str) -> bool:
     if not provided or not expected:
         return False
 
-    return hmac.compare_digest(provided, expected)
+    return hmac.compare_digest(
+        provided.encode("utf-8"),
+        expected.encode("utf-8"),
+    )
 
 
 def get_internal_auth_error(
