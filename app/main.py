@@ -1,10 +1,12 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
 from app.chat_service import ChatService
 from app.app_launcher_service import AppLauncherService
 from app.config import settings
 from app.persona_service import PersonaService
 from app.memory_service import MemoryService
+from app.internal_auth import INTERNAL_TOKEN_HEADER, get_internal_auth_error
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -20,8 +22,33 @@ from app.schemas import (
 app = FastAPI(title=settings.APP_NAME)
 
 
+@app.middleware("http")
+async def require_internal_auth(request: Request, call_next):
+    if request.url.path == "/health":
+        return await call_next(request)
+
+    provided_token = request.headers.get(INTERNAL_TOKEN_HEADER, "")
+    auth_error = get_internal_auth_error(
+        provided_token,
+        settings.AI_INTERNAL_TOKEN,
+    )
+
+    if auth_error is not None:
+        status_code, detail = auth_error
+        return JSONResponse(
+            status_code=status_code,
+            content={"detail": detail},
+        )
+
+    return await call_next(request)
+
+
 @app.get("/health", response_model=HealthResponse)
-def health():
+def health(response: Response):
+    if not settings.AI_INTERNAL_TOKEN:
+        response.status_code = 503
+        return HealthResponse(status="misconfigured", app=settings.APP_NAME)
+
     return HealthResponse(status="ok", app=settings.APP_NAME)
 
 

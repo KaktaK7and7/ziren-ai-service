@@ -7,6 +7,7 @@ load_dotenv()
 class Settings:
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+    AI_INTERNAL_TOKEN: str = os.getenv("AI_INTERNAL_TOKEN", "").strip()
 
     # Основная модель для ответов ассистента
     MODEL: str = os.getenv("MODEL", "gpt-4.1-mini")
