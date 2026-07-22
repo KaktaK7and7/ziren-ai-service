@@ -15,11 +15,17 @@ from app.schemas import (
     AppLauncherResolveResponse,
     MemoryItemCreateRequest,
     MemoryItemUpdateRequest,
+    PersonaNameRequest,
     PersonaPresetRequest,
 )
 
 
 app = FastAPI(title=settings.APP_NAME)
+
+
+def internal_server_error(context: str, error: Exception) -> HTTPException:
+    print(f"[{context}] {type(error).__name__}: {error}")
+    return HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.middleware("http")
@@ -45,7 +51,13 @@ async def require_internal_auth(request: Request, call_next):
 
 @app.get("/health", response_model=HealthResponse)
 def health(response: Response):
-    if not settings.AI_INTERNAL_TOKEN:
+    required_values = (
+        settings.AI_INTERNAL_TOKEN,
+        settings.OPENAI_API_KEY,
+        settings.DATABASE_URL,
+    )
+
+    if not all(required_values):
         response.status_code = 503
         return HealthResponse(status="misconfigured", app=settings.APP_NAME)
 
@@ -53,13 +65,13 @@ def health(response: Response):
 
 
 @app.post("/persona/{user_id}/name")
-def update_name(user_id: int, data: dict):
+def update_name(user_id: int, payload: PersonaNameRequest):
     try:
-        return PersonaService.update_name(user_id, data.get("name", ""))
+        return PersonaService.update_name(user_id, payload.name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_server_error("persona.name", e) from e
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest):
@@ -77,7 +89,7 @@ def chat(payload: ChatRequest):
             memory_logs=memory_logs,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_server_error("chat", e) from e
 
 
 @app.get("/persona/{user_id}")
@@ -85,7 +97,7 @@ def get_persona(user_id: int):
     try:
         return PersonaService.ensure_persona(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_server_error("persona.get", e) from e
 
 
 @app.get("/messages/{user_id}")
@@ -93,7 +105,7 @@ def get_messages(user_id: int):
     try:
         return ChatService.get_last_session_messages(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_server_error("messages.get", e) from e
 
 
 @app.post("/persona/{user_id}/preset")
@@ -103,7 +115,7 @@ def apply_persona_preset(user_id: int, payload: PersonaPresetRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_server_error("persona.preset", e) from e
 
 
 @app.get("/memory/{user_id}")
@@ -111,7 +123,7 @@ def get_memory(user_id: int):
     try:
         return MemoryService.ensure_memory(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_server_error("memory.get", e) from e
 
 
 @app.post("/app-launcher/resolve", response_model=AppLauncherResolveResponse)
@@ -124,7 +136,7 @@ def clear_memory(user_id: int):
     try:
         return MemoryService.clear_all_memory(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_server_error("memory.clear", e) from e
 
 
 @app.delete("/memory/{user_id}/all")
@@ -132,7 +144,7 @@ def delete_all_memory(user_id: int):
     try:
         return MemoryService.clear_all_memory(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_server_error("memory.delete_all", e) from e
 
 
 @app.get("/memory-items/{user_id}")
@@ -140,7 +152,7 @@ def list_memory_items(user_id: int):
     try:
         return MemoryService.list_memory_items(user_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_server_error("memory_items.list", e) from e
 
 
 @app.post("/memory-items/{user_id}")
@@ -153,7 +165,7 @@ def create_memory_item(user_id: int, payload: MemoryItemCreateRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_server_error("memory_items.create", e) from e
 
 
 @app.patch("/memory-items/{user_id}/{item_id}")
@@ -172,7 +184,7 @@ def update_memory_item(user_id: int, item_id: int, payload: MemoryItemUpdateRequ
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_server_error("memory_items.update", e) from e
 
 
 @app.delete("/memory-items/{user_id}/{item_id}")
@@ -185,4 +197,4 @@ def delete_memory_item(user_id: int, item_id: int):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_server_error("memory_items.delete", e) from e
