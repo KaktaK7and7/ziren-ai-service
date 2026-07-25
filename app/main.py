@@ -1,9 +1,12 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.chat_service import ChatService
 from app.app_launcher_service import AppLauncherService
 from app.config import settings
+from app.db_schema import ensure_schema
 from app.persona_service import PersonaService
 from app.memory_service import MemoryService
 from app.internal_auth import INTERNAL_TOKEN_HEADER, get_internal_auth_error
@@ -20,7 +23,13 @@ from app.schemas import (
 )
 
 
-app = FastAPI(title=settings.APP_NAME)
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    ensure_schema()
+    yield
+
+
+app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
 
 
 def internal_server_error(context: str, error: Exception) -> HTTPException:
