@@ -27,14 +27,14 @@ class AppLauncherCandidate(BaseModel):
     name: str = Field(min_length=1, max_length=500)
     type: str = Field(default="", max_length=50)
     source: str = Field(default="", max_length=100)
-    aliases: List[str] = Field(default_factory=list)
+    aliases: List[str] = Field(default_factory=list, max_length=10)
     appid: Optional[str] = Field(default=None, max_length=100)
     path_basename: str = Field(default="", max_length=500)
 
 
 class AppLauncherResolveRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
-    candidates: List[AppLauncherCandidate] = Field(default_factory=list)
+    candidates: List[AppLauncherCandidate] = Field(default_factory=list, max_length=40)
 
 
 class AppLauncherResolveResponse(BaseModel):
@@ -44,8 +44,12 @@ class AppLauncherResolveResponse(BaseModel):
     reason: str = ""
 
 
+class PersonaNameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
 class PersonaPresetRequest(BaseModel):
-    preset_name: str
+    preset_name: str = Field(min_length=1, max_length=100)
 
 
 class MemoryItemCreateRequest(BaseModel):

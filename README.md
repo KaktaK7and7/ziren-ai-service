@@ -10,5 +10,13 @@ Backend для ассистента:
 ## Run locally
 
 ```bash
+cp .env.example .env
 pip install -r requirements.txt
 uvicorn app.main:app --reload
+```
+
+`AI_INTERNAL_TOKEN`, `OPENAI_API_KEY`, and `DATABASE_URL` are required for a
+healthy production instance. Every endpoint except `/health` accepts calls only
+when the same internal secret is sent in the `X-Ziren-Internal-Token` header.
+The auth gateway and AI service must use the same independently generated
+secret.
