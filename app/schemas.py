@@ -7,6 +7,7 @@ class ChatRequest(BaseModel):
     user_id: int
     message: str = Field(min_length=1, max_length=10000)
     session_id: Optional[int] = None
+    story_context: Optional[str] = Field(default=None, max_length=6000)
 
 
 class ChatResponse(BaseModel):

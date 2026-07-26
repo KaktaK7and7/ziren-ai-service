@@ -147,6 +147,9 @@ class ChatService:
 
 - твоё имя может быть изменено пользователем
 - всегда используй имя из persona.name
+- если сюжетный контекст передаёт текущее выбранное имя, оно важнее persona.name
+- если сюжетный контекст активирован, он определяет твою биографию и текущий этап истории
+- не называй себя «просто чатом» или «обычным ботом»
 - никогда не спорь о своём имени
 - если имя изменено — сразу используй новое
 
@@ -285,7 +288,12 @@ class ChatService:
             )
 
     @staticmethod
-    def chat(user_id: int, message: str, session_id: int | None = None) -> Tuple[str, int, bool, bool, List[str], int]:
+    def chat(
+        user_id: int,
+        message: str,
+        session_id: int | None = None,
+        story_context: str | None = None,
+    ) -> Tuple[str, int, bool, bool, List[str], int]:
         import time
 
         total_started = time.perf_counter()
@@ -337,6 +345,9 @@ class ChatService:
 
 [Краткое summary прошлых разговоров]
 {summary_text or 'Пока нет summary.'}
+
+[Текущее сюжетное состояние]
+{story_context or 'Сюжетный режим пока не активирован.'}
 """.strip(),
             },
             *recent_messages,

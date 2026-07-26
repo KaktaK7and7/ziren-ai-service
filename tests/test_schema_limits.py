@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from app.schemas import (
     AppLauncherCandidate,
     AppLauncherResolveRequest,
+    ChatRequest,
     PersonaNameRequest,
     PersonaPresetRequest,
 )
@@ -46,6 +47,22 @@ class SchemaLimitTests(unittest.TestCase):
             with self.subTest(payload_type=payload_type.__name__):
                 with self.assertRaises(ValidationError):
                     payload_type(**{field_name: "x" * 101})
+
+    def test_story_context_is_optional_and_bounded(self) -> None:
+        payload = ChatRequest(
+            user_id=1,
+            message="Привет",
+            story_context="сюжет",
+        )
+
+        self.assertEqual(payload.story_context, "сюжет")
+
+        with self.assertRaises(ValidationError):
+            ChatRequest(
+                user_id=1,
+                message="Привет",
+                story_context="x" * 6001,
+            )
 
 
 if __name__ == "__main__":
