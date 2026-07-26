@@ -89,6 +89,7 @@ def chat(payload: ChatRequest):
             user_id=payload.user_id,
             message=payload.message,
             session_id=payload.session_id,
+            story_context=payload.story_context,
         )
         return ChatResponse(
             answer=answer,
