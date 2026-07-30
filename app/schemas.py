@@ -12,6 +12,7 @@ class ChatRequest(BaseModel):
     user_id: int
     message: str = Field(min_length=1, max_length=10000)
     session_id: Optional[int] = None
+    story_mode_enabled: bool = True
     preceding_assistant_lines: List[DeliveredCompanionLine] = Field(
         default_factory=list,
         max_length=2,
@@ -36,6 +37,7 @@ class CommandReactionRequest(BaseModel):
     subject_label: str = Field(default="", max_length=120)
     result_text: str = Field(default="", max_length=240)
     session_id: Optional[int] = None
+    story_mode_enabled: bool = True
     story_context: Optional[str] = Field(default=None, max_length=6000)
     activity_context: Optional[str] = Field(default=None, max_length=3000)
     capability_context: Optional[str] = Field(default=None, max_length=5000)
@@ -45,6 +47,7 @@ class ProactiveRequest(BaseModel):
     user_id: int
     idle_minutes: int = Field(ge=1, le=1440)
     session_id: Optional[int] = None
+    story_mode_enabled: bool = True
     story_context: Optional[str] = Field(default=None, max_length=6000)
     activity_context: Optional[str] = Field(default=None, max_length=3000)
     capability_context: Optional[str] = Field(default=None, max_length=5000)

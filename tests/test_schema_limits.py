@@ -60,6 +60,14 @@ class SchemaLimitTests(unittest.TestCase):
         self.assertEqual(payload.story_context, "сюжет")
         self.assertEqual(payload.activity_context, "событие")
         self.assertEqual(payload.capability_context, "команды")
+        self.assertTrue(payload.story_mode_enabled)
+        self.assertFalse(
+            ChatRequest(
+                user_id=1,
+                message="Привет",
+                story_mode_enabled=False,
+            ).story_mode_enabled,
+        )
 
         self.assertEqual(
             ChatRequest(
