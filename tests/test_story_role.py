@@ -59,6 +59,22 @@ class StoryRoleTests(unittest.TestCase):
         self.assertIn("tone: мягкий", prompt)
         self.assertNotIn("старый preset личности игнорируется", prompt)
 
+    def test_living_story_name_overrides_stale_persona_name(self) -> None:
+        prompt = ChatService.build_system_prompt(
+            {
+                "name": "Мелисса",
+                "core_traits": [],
+                "speech_style": {},
+                "behavior_rules": [],
+                "speech_habits": [],
+            },
+            story_mode_enabled=True,
+            companion_name="Искра",
+        )
+
+        self.assertIn('"Искра"', prompt)
+        self.assertNotIn('"Мелисса"', prompt)
+
     def test_role_break_detector_catches_self_identification_and_third_person(
         self,
     ) -> None:

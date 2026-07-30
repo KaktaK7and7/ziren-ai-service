@@ -175,11 +175,17 @@ class ChatService:
     def build_system_prompt(
         persona: Dict[str, Any],
         story_mode_enabled: bool = True,
+        companion_name: str | None = None,
     ) -> str:
+        selected_name = (
+            companion_name
+            if story_mode_enabled and companion_name
+            else persona.get("name")
+        )
         persona_name = re.sub(
             r"[\x00-\x1f\x7f]",
             " ",
-            str(persona.get("name") or "Мелисса"),
+            str(selected_name or "Мелисса"),
         ).strip()[:32] or "Мелисса"
 
         if story_mode_enabled:
@@ -476,6 +482,7 @@ class ChatService:
         session_id: int | None = None,
         preceding_assistant_lines: List[str] | None = None,
         story_mode_enabled: bool = True,
+        companion_name: str | None = None,
         story_context: str | None = None,
         activity_context: str | None = None,
         capability_context: str | None = None,
@@ -535,6 +542,7 @@ class ChatService:
                 "content": ChatService.build_system_prompt(
                     persona,
                     story_mode_enabled=story_mode_enabled,
+                    companion_name=companion_name,
                 ),
             },
             {
@@ -628,6 +636,7 @@ class ChatService:
         instruction: str,
         session_id: int | None = None,
         story_mode_enabled: bool = True,
+        companion_name: str | None = None,
         story_context: str | None = None,
         activity_context: str | None = None,
         capability_context: str | None = None,
@@ -642,6 +651,7 @@ class ChatService:
                 "content": ChatService.build_system_prompt(
                     persona,
                     story_mode_enabled=story_mode_enabled,
+                    companion_name=companion_name,
                 ),
             },
             {
