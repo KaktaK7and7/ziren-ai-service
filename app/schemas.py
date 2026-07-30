@@ -1,13 +1,24 @@
-from typing import List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+DeliveredCompanionLine = Annotated[
+    str,
+    Field(min_length=1, max_length=600),
+]
 
 
 class ChatRequest(BaseModel):
     user_id: int
     message: str = Field(min_length=1, max_length=10000)
     session_id: Optional[int] = None
+    preceding_assistant_lines: List[DeliveredCompanionLine] = Field(
+        default_factory=list,
+        max_length=2,
+    )
     story_context: Optional[str] = Field(default=None, max_length=6000)
+    activity_context: Optional[str] = Field(default=None, max_length=3000)
+    capability_context: Optional[str] = Field(default=None, max_length=5000)
 
 
 class ChatResponse(BaseModel):
@@ -16,6 +27,32 @@ class ChatResponse(BaseModel):
     memory_updated: bool
     summary_updated: bool
     memory_logs: List[str]
+    story_signal: Optional[Dict[str, Any]] = None
+
+
+class CommandReactionRequest(BaseModel):
+    user_id: int
+    feature_id: str = Field(min_length=1, max_length=100)
+    subject_label: str = Field(default="", max_length=120)
+    result_text: str = Field(default="", max_length=240)
+    session_id: Optional[int] = None
+    story_context: Optional[str] = Field(default=None, max_length=6000)
+    activity_context: Optional[str] = Field(default=None, max_length=3000)
+    capability_context: Optional[str] = Field(default=None, max_length=5000)
+
+
+class ProactiveRequest(BaseModel):
+    user_id: int
+    idle_minutes: int = Field(ge=1, le=1440)
+    session_id: Optional[int] = None
+    story_context: Optional[str] = Field(default=None, max_length=6000)
+    activity_context: Optional[str] = Field(default=None, max_length=3000)
+    capability_context: Optional[str] = Field(default=None, max_length=5000)
+
+
+class CompanionLineResponse(BaseModel):
+    text: str
+    session_id: int
 
 
 class HealthResponse(BaseModel):
