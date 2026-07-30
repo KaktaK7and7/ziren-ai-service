@@ -102,6 +102,8 @@ def chat(payload: ChatRequest):
             message=payload.message,
             session_id=payload.session_id,
             preceding_assistant_lines=payload.preceding_assistant_lines,
+            story_mode_enabled=payload.story_mode_enabled,
+            companion_name=payload.companion_name,
             story_context=payload.story_context,
             activity_context=payload.activity_context,
             capability_context=payload.capability_context,
@@ -134,6 +136,8 @@ def command_reaction(payload: CommandReactionRequest):
         text, session_id = ChatService.generate_companion_line(
             user_id=payload.user_id,
             session_id=payload.session_id,
+            story_mode_enabled=payload.story_mode_enabled,
+            companion_name=payload.companion_name,
             story_context=payload.story_context,
             activity_context=payload.activity_context,
             capability_context=payload.capability_context,
@@ -158,6 +162,8 @@ def proactive(payload: ProactiveRequest):
         text, session_id = ChatService.generate_companion_line(
             user_id=payload.user_id,
             session_id=payload.session_id,
+            story_mode_enabled=payload.story_mode_enabled,
+            companion_name=payload.companion_name,
             story_context=payload.story_context,
             activity_context=payload.activity_context,
             capability_context=payload.capability_context,

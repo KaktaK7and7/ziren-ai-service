@@ -52,6 +52,7 @@ class SchemaLimitTests(unittest.TestCase):
         payload = ChatRequest(
             user_id=1,
             message="Привет",
+            companion_name="Искра",
             story_context="сюжет",
             activity_context="событие",
             capability_context="команды",
@@ -60,6 +61,15 @@ class SchemaLimitTests(unittest.TestCase):
         self.assertEqual(payload.story_context, "сюжет")
         self.assertEqual(payload.activity_context, "событие")
         self.assertEqual(payload.capability_context, "команды")
+        self.assertEqual(payload.companion_name, "Искра")
+        self.assertTrue(payload.story_mode_enabled)
+        self.assertFalse(
+            ChatRequest(
+                user_id=1,
+                message="Привет",
+                story_mode_enabled=False,
+            ).story_mode_enabled,
+        )
 
         self.assertEqual(
             ChatRequest(
@@ -103,6 +113,13 @@ class SchemaLimitTests(unittest.TestCase):
                 user_id=1,
                 message="Привет",
                 capability_context="x" * 5001,
+            )
+
+        with self.assertRaises(ValidationError):
+            ChatRequest(
+                user_id=1,
+                message="Привет",
+                companion_name="x" * 33,
             )
 
 
