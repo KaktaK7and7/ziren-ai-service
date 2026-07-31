@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from app.chat_service import ChatService
 
@@ -135,6 +136,73 @@ class StoryRoleTests(unittest.TestCase):
                 enforce_story_voice=True,
             ),
         )
+
+    def test_command_reaction_task_follows_chat_history(self) -> None:
+        messages = ChatService.build_companion_line_messages(
+            persona={
+                "name": "Мелисса",
+                "core_traits": [],
+                "speech_style": {},
+                "behavior_rules": [],
+                "speech_habits": [],
+            },
+            memory_row={},
+            recent_messages=[
+                {
+                    "role": "user",
+                    "content": "Почему прошлый запуск занял так много времени?",
+                },
+            ],
+            instruction=(
+                'Отреагируй на текущую команду: '
+                '{"recognized_command":"открыть Cyberpunk 2077",'
+                '"local_result":"игра запущена"}'
+            ),
+        )
+
+        self.assertEqual(messages[-2]["role"], "user")
+        self.assertEqual(messages[-1]["role"], "developer")
+        self.assertIn("открыть Cyberpunk 2077", messages[-1]["content"])
+        self.assertIn("только как фон", messages[-1]["content"])
+        self.assertIn("говори только по теме этой команды", messages[-1]["content"])
+
+    def test_command_reaction_can_exclude_stale_chat_history(self) -> None:
+        with (
+            patch(
+                "app.chat_service.PersonaService.ensure_persona",
+                return_value={
+                    "name": "Мелисса",
+                    "core_traits": [],
+                    "speech_style": {},
+                    "behavior_rules": [],
+                    "speech_habits": [],
+                },
+            ),
+            patch(
+                "app.chat_service.MemoryService.ensure_memory",
+                return_value={},
+            ),
+            patch.object(
+                ChatService,
+                "get_or_create_session",
+                return_value=17,
+            ),
+            patch.object(ChatService, "get_recent_messages") as recent_messages,
+            patch.object(
+                ChatService,
+                "generate_role_safe_reply",
+                return_value=("Запускаешь игру без разминки. Смело.", None),
+            ),
+        ):
+            answer, session_id = ChatService.generate_companion_line(
+                user_id=3,
+                instruction="Отреагируй на запуск игры.",
+                include_recent_messages=False,
+            )
+
+        self.assertEqual(answer, "Запускаешь игру без разминки. Смело.")
+        self.assertEqual(session_id, 17)
+        recent_messages.assert_not_called()
 
 
 if __name__ == "__main__":
