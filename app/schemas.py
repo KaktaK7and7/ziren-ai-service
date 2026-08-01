@@ -27,6 +27,26 @@ class ChatRequest(BaseModel):
     capability_context: Optional[str] = Field(default=None, max_length=5000)
 
 
+class ScreenAnalysisRequest(BaseModel):
+    user_id: int
+    message: str = Field(min_length=1, max_length=2000)
+    image_data_url: str = Field(min_length=100, max_length=1_800_000)
+    session_id: Optional[int] = None
+    story_mode_enabled: bool = True
+    companion_name: Optional[str] = Field(
+        default=None,
+        min_length=2,
+        max_length=32,
+    )
+    preceding_assistant_lines: List[DeliveredCompanionLine] = Field(
+        default_factory=list,
+        max_length=2,
+    )
+    story_context: Optional[str] = Field(default=None, max_length=6000)
+    activity_context: Optional[str] = Field(default=None, max_length=3000)
+    capability_context: Optional[str] = Field(default=None, max_length=5000)
+
+
 class ChatResponse(BaseModel):
     answer: str
     session_id: int

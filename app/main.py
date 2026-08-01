@@ -1,3 +1,5 @@
+import base64
+import binascii
 import json
 from contextlib import asynccontextmanager
 
@@ -24,6 +26,7 @@ from app.schemas import (
     PersonaNameRequest,
     PersonaPresetRequest,
     ProactiveRequest,
+    ScreenAnalysisRequest,
 )
 
 
@@ -34,6 +37,9 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
+
+SCREENSHOT_DATA_URL_PREFIX = "data:image/jpeg;base64,"
+MAX_SCREENSHOT_BYTES = 1_250_000
 
 
 def internal_server_error(context: str, error: Exception) -> HTTPException:
@@ -118,6 +124,53 @@ def chat(payload: ChatRequest):
         )
     except Exception as e:
         raise internal_server_error("chat", e) from e
+
+
+def validate_screenshot_data_url(image_data_url: str) -> None:
+    if not image_data_url.startswith(SCREENSHOT_DATA_URL_PREFIX):
+        raise HTTPException(status_code=400, detail="Screenshot must be a JPEG data URL")
+
+    encoded = image_data_url[len(SCREENSHOT_DATA_URL_PREFIX):]
+
+    try:
+        image_bytes = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise HTTPException(status_code=400, detail="Invalid screenshot encoding") from error
+
+    if len(image_bytes) > MAX_SCREENSHOT_BYTES:
+        raise HTTPException(status_code=413, detail="Screenshot is too large")
+
+    if len(image_bytes) < 4 or not image_bytes.startswith(b"\xff\xd8\xff"):
+        raise HTTPException(status_code=400, detail="Invalid JPEG screenshot")
+
+
+@app.post("/vision", response_model=ChatResponse)
+def analyze_screen(payload: ScreenAnalysisRequest):
+    validate_screenshot_data_url(payload.image_data_url)
+
+    try:
+        answer, session_id = ChatService.analyze_screen(
+            user_id=payload.user_id,
+            message=payload.message,
+            image_data_url=payload.image_data_url,
+            session_id=payload.session_id,
+            preceding_assistant_lines=payload.preceding_assistant_lines,
+            story_mode_enabled=payload.story_mode_enabled,
+            companion_name=payload.companion_name,
+            story_context=payload.story_context,
+            activity_context=payload.activity_context,
+            capability_context=payload.capability_context,
+        )
+        return ChatResponse(
+            answer=answer,
+            session_id=session_id,
+            memory_updated=False,
+            summary_updated=False,
+            memory_logs=[],
+            story_signal=None,
+        )
+    except Exception as e:
+        raise internal_server_error("vision", e) from e
 
 
 @app.post("/reaction", response_model=CompanionLineResponse)
@@ -237,6 +290,14 @@ def delete_all_memory(user_id: int):
         return MemoryService.clear_all_memory(user_id)
     except Exception as e:
         raise internal_server_error("memory.delete_all", e) from e
+
+
+@app.post("/reset/{user_id}")
+def reset_user_data(user_id: int):
+    try:
+        return MemoryService.reset_all_user_data(user_id)
+    except Exception as e:
+        raise internal_server_error("user.reset", e) from e
 
 
 @app.get("/memory-items/{user_id}")
