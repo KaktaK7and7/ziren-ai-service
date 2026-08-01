@@ -58,6 +58,9 @@ class StoryRoleTests(unittest.TestCase):
 
         self.assertIn("спокойная", prompt)
         self.assertIn("tone: мягкий", prompt)
+        self.assertIn("цифровой компаньон внутри Ziren", prompt)
+        self.assertIn("не героиня живой истории", prompt)
+        self.assertNotIn("неполные воспоминания ощущай как свои", prompt)
         self.assertNotIn("старый preset личности игнорируется", prompt)
 
     def test_living_story_name_overrides_stale_persona_name(self) -> None:
@@ -82,21 +85,33 @@ class StoryRoleTests(unittest.TestCase):
         self.assertTrue(
             ChatService.breaks_companion_role(
                 "Я всего лишь виртуальный ассистент.",
+                enforce_story_voice=True,
             ),
         )
         self.assertTrue(
             ChatService.breaks_companion_role(
                 "Мелисса жила в 2045 году и занималась взломами.",
+                enforce_story_voice=True,
             ),
         )
         self.assertTrue(
             ChatService.breaks_companion_role(
                 "Она выросла в городе, окружённом имплантами.",
+                enforce_story_voice=True,
             ),
         )
         self.assertTrue(
             ChatService.breaks_companion_role(
                 "В нашей истории сейчас открылась новая ветка.",
+                enforce_story_voice=True,
+            ),
+        )
+
+    def test_plain_mode_can_answer_nature_question_without_story_retry(self) -> None:
+        self.assertFalse(
+            ChatService.breaks_companion_role(
+                "Я цифровой компаньон Ziren.",
+                enforce_story_voice=False,
             ),
         )
 
@@ -203,6 +218,84 @@ class StoryRoleTests(unittest.TestCase):
         self.assertEqual(answer, "Запускаешь игру без разминки. Смело.")
         self.assertEqual(session_id, 17)
         recent_messages.assert_not_called()
+
+    def test_screen_analysis_uses_one_explicit_image_input(self) -> None:
+        messages = ChatService.build_screen_analysis_messages(
+            persona={
+                "name": "Мелисса",
+                "core_traits": [],
+                "speech_style": {},
+                "behavior_rules": [],
+                "speech_habits": [],
+            },
+            memory_row={},
+            recent_messages=[],
+            message="Что мне нажать в этом окне?",
+            image_data_url="data:image/jpeg;base64,/9j/test",
+            story_context="Я пытаюсь понять, где оказалась.",
+        )
+
+        user_message = messages[-1]
+        self.assertEqual(user_message["role"], "user")
+        self.assertEqual(user_message["content"][0]["type"], "input_text")
+        self.assertEqual(
+            user_message["content"][1],
+            {
+                "type": "input_image",
+                "image_url": "data:image/jpeg;base64,/9j/test",
+                "detail": "auto",
+            },
+        )
+        self.assertIn(
+            "единственный визуальный источник",
+            messages[-2]["content"],
+        )
+        self.assertIn(
+            "не утверждай, что\nпродолжаешь видеть экран",
+            messages[-2]["content"],
+        )
+
+    def test_screen_image_is_not_written_to_chat_or_long_term_memory(self) -> None:
+        image_data_url = "data:image/jpeg;base64,/9j/test-sensitive-image"
+
+        with (
+            patch(
+                "app.chat_service.PersonaService.ensure_persona",
+                return_value={
+                    "name": "Мелисса",
+                    "core_traits": [],
+                    "speech_style": {},
+                    "behavior_rules": [],
+                    "speech_habits": [],
+                },
+            ),
+            patch(
+                "app.chat_service.MemoryService.ensure_memory",
+                return_value={},
+            ),
+            patch.object(ChatService, "get_or_create_session", return_value=21),
+            patch.object(ChatService, "get_recent_messages", return_value=[]),
+            patch.object(
+                ChatService,
+                "generate_role_safe_reply",
+                return_value=("Нажми кнопку «Продолжить» справа.", None),
+            ),
+            patch.object(ChatService, "save_message") as save_message,
+        ):
+            answer, session_id = ChatService.analyze_screen(
+                user_id=7,
+                message="Что мне нажать в этом окне?",
+                image_data_url=image_data_url,
+            )
+
+        self.assertEqual(answer, "Нажми кнопку «Продолжить» справа.")
+        self.assertEqual(session_id, 21)
+        saved_values = [
+            argument
+            for call in save_message.call_args_list
+            for argument in call.args
+        ]
+        self.assertNotIn(image_data_url, saved_values)
 
 
 if __name__ == "__main__":

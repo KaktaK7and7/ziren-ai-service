@@ -378,6 +378,29 @@ class MemoryService:
         return {"ok": True}
 
     @staticmethod
+    def reset_all_user_data(user_id: int) -> Dict[str, bool]:
+        """Remove companion state while keeping the Ziren account itself."""
+        with db_cursor(commit=True) as cur:
+            cur.execute(
+                "DELETE FROM ai_memory_items WHERE user_id = %s",
+                (user_id,),
+            )
+            cur.execute(
+                "DELETE FROM ai_chat_sessions WHERE user_id = %s",
+                (user_id,),
+            )
+            cur.execute(
+                "DELETE FROM ai_user_memory WHERE user_id = %s",
+                (user_id,),
+            )
+            cur.execute(
+                "DELETE FROM ai_personas WHERE user_id = %s",
+                (user_id,),
+            )
+
+        return {"ok": True}
+
+    @staticmethod
     def should_run_ai_memory_analysis(message: str, regex_changed: bool) -> bool:
         text = normalize_text(message).lower()
 
