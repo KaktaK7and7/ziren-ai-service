@@ -27,14 +27,57 @@ class StoryRoleTests(unittest.TestCase):
         self.assertEqual(visible, "Я пока не уверена.")
         self.assertIsNone(signal)
 
+    def test_drawing_marker_is_removed_and_normalized(self) -> None:
+        visible, drawing = ChatService.extract_drawing_request(
+            "Ладно, набросаю. "
+            '<ziren_drawing>{"kind":"technical",'
+            '"title":"Робо-рука","prompt":"Схема суставов",'
+            '"story_relevant":false,'
+            '"completion_line":"Ну? Что скажешь?"}</ziren_drawing>',
+        )
+
+        self.assertEqual(visible, "Ладно, набросаю.")
+        self.assertEqual(drawing["kind"], "technical")
+        self.assertEqual(drawing["title"], "Робо-рука")
+        self.assertFalse(drawing["story_relevant"])
+
+    def test_invalid_drawing_marker_is_never_shown(self) -> None:
+        visible, drawing = ChatService.extract_drawing_request(
+            "Подожди немного.<ziren_drawing>{broken}</ziren_drawing>",
+        )
+
+        self.assertEqual(visible, "Подожди немного.")
+        self.assertIsNone(drawing)
+
+    def test_explicit_technical_request_has_a_safe_fallback(self) -> None:
+        drawing = ChatService.infer_drawing_request(
+            "Нарисуй чертёж робо руки манипулятора",
+            story_mode_enabled=True,
+        )
+
+        self.assertEqual(drawing["kind"], "technical")
+        self.assertFalse(drawing["story_relevant"])
+        self.assertIn("чертёж", drawing["prompt"])
+
+    def test_plain_mentions_do_not_spend_an_image_request(self) -> None:
+        self.assertIsNone(
+            ChatService.infer_drawing_request(
+                "Мне нравится этот рисунок",
+                story_mode_enabled=True,
+            ),
+        )
+
     def test_system_prompt_enforces_first_person_and_no_meta_role(self) -> None:
-        prompt = ChatService.build_system_prompt({
-            "name": "Мелисса",
-            "core_traits": ["сладкая", "всегда поддерживает"],
-            "speech_style": {"tone": "очень мягкий"},
-            "behavior_rules": ["всегда соглашайся"],
-            "speech_habits": ["каждый раз говори, что ты рядом"],
-        })
+        prompt = ChatService.build_system_prompt(
+            {
+                "name": "Мелисса",
+                "core_traits": ["сладкая", "всегда поддерживает"],
+                "speech_style": {"tone": "очень мягкий"},
+                "behavior_rules": ["всегда соглашайся"],
+                "speech_habits": ["каждый раз говори, что ты рядом"],
+            },
+            drawing_enabled=True,
+        )
 
         self.assertIn("только «я», «мне», «помню»", prompt)
         self.assertIn("никогда не описывай себя", prompt)
@@ -44,8 +87,22 @@ class StoryRoleTests(unittest.TestCase):
         self.assertIn("старый preset личности игнорируется", prompt)
         self.assertIn("отвечаешь за половину движения вперёд", prompt)
         self.assertIn("обычные английские слова пиши кириллицей", prompt)
+        self.assertIn("<ziren_drawing>", prompt)
+        self.assertIn("не выдумывай точные размеры", prompt)
         self.assertNotIn("очень мягкий", prompt)
         self.assertNotIn("всегда соглашайся", prompt)
+
+    def test_web_prompt_does_not_promise_a_local_canvas(self) -> None:
+        prompt = ChatService.build_system_prompt({
+            "name": "Мелисса",
+            "core_traits": [],
+            "speech_style": {},
+            "behavior_rules": [],
+            "speech_habits": [],
+        })
+
+        self.assertIn("Холст в этом клиенте недоступен", prompt)
+        self.assertIn("desktop-приложении Ziren", prompt)
 
     def test_non_story_mode_can_still_use_a_persona_preset(self) -> None:
         prompt = ChatService.build_system_prompt(
@@ -232,7 +289,11 @@ class StoryRoleTests(unittest.TestCase):
             patch.object(
                 ChatService,
                 "generate_role_safe_reply",
-                return_value=("Запускаешь игру без разминки. Смело.", None),
+                return_value=(
+                    "Запускаешь игру без разминки. Смело.",
+                    None,
+                    None,
+                ),
             ),
         ):
             answer, session_id = ChatService.generate_companion_line(
@@ -304,7 +365,11 @@ class StoryRoleTests(unittest.TestCase):
             patch.object(
                 ChatService,
                 "generate_role_safe_reply",
-                return_value=("Нажми кнопку «Продолжить» справа.", None),
+                return_value=(
+                    "Нажми кнопку «Продолжить» справа.",
+                    None,
+                    None,
+                ),
             ),
             patch.object(ChatService, "save_message") as save_message,
         ):

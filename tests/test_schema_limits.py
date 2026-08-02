@@ -6,6 +6,7 @@ from app.schemas import (
     AppLauncherCandidate,
     AppLauncherResolveRequest,
     ChatRequest,
+    DrawingGenerateRequest,
     PersonaNameRequest,
     PersonaPresetRequest,
 )
@@ -63,6 +64,14 @@ class SchemaLimitTests(unittest.TestCase):
         self.assertEqual(payload.capability_context, "команды")
         self.assertEqual(payload.companion_name, "Искра")
         self.assertTrue(payload.story_mode_enabled)
+        self.assertFalse(payload.drawing_enabled)
+        self.assertTrue(
+            ChatRequest(
+                user_id=1,
+                message="Нарисуй",
+                drawing_enabled=True,
+            ).drawing_enabled,
+        )
         self.assertFalse(
             ChatRequest(
                 user_id=1,
@@ -120,6 +129,30 @@ class SchemaLimitTests(unittest.TestCase):
                 user_id=1,
                 message="Привет",
                 companion_name="x" * 33,
+            )
+
+    def test_drawing_generation_fields_are_bounded(self) -> None:
+        payload = DrawingGenerateRequest(
+            user_id=1,
+            kind="technical",
+            title="Робо-рука",
+            prompt="Схема суставов манипулятора",
+        )
+        self.assertEqual(payload.kind, "technical")
+
+        with self.assertRaises(ValidationError):
+            DrawingGenerateRequest(
+                user_id=1,
+                kind="render",
+                title="Робо-рука",
+                prompt="Схема суставов",
+            )
+
+        with self.assertRaises(ValidationError):
+            DrawingGenerateRequest(
+                user_id=1,
+                title="x" * 81,
+                prompt="Схема суставов",
             )
 
 

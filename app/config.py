@@ -16,6 +16,9 @@ class Settings:
     # Можно оставить такую же, потом заменить на более дешёвую
     MEMORY_MODEL: str = os.getenv("MEMORY_MODEL", "gpt-4.1-mini")
 
+    # Рисунки создаются отдельной моделью и не замедляют обычный диалог.
+    IMAGE_MODEL: str = os.getenv("IMAGE_MODEL", "gpt-image-2")
+
     APP_NAME: str = os.getenv("APP_NAME", "ziren-ai-service")
 
 

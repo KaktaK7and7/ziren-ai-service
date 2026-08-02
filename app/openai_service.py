@@ -1,3 +1,5 @@
+from typing import Any
+
 from openai import OpenAI
 
 from app.config import settings
@@ -72,5 +74,31 @@ class OpenAIService:
             pass
 
         return "\n".join(parts).strip()
-    
-    
+
+    @staticmethod
+    def generate_image(model: str, prompt: str) -> dict[str, Any]:
+        print("[OpenAI][IMAGE] sending request...")
+        print(f"[OpenAI][IMAGE] model={model}")
+
+        response = client.with_options(timeout=120.0).images.generate(
+            model=model,
+            prompt=prompt,
+            size="1024x1024",
+            quality="medium",
+            output_format="png",
+        )
+
+        if not response.data:
+            raise RuntimeError("Image model returned no image")
+
+        item = response.data[0]
+        image_base64 = getattr(item, "b64_json", None)
+
+        if not image_base64:
+            raise RuntimeError("Image model returned no base64 payload")
+
+        print("[OpenAI][IMAGE] response received")
+        return {
+            "image_base64": image_base64,
+            "revised_prompt": getattr(item, "revised_prompt", None),
+        }
