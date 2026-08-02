@@ -13,6 +13,7 @@ from app.db_schema import ensure_schema
 from app.persona_service import PersonaService
 from app.memory_service import MemoryService
 from app.internal_auth import INTERNAL_TOKEN_HEADER, get_internal_auth_error
+from app.proactive_prompt import build_proactive_instruction
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -224,12 +225,9 @@ def proactive(payload: ProactiveRequest):
             story_context=payload.story_context,
             activity_context=payload.activity_context,
             capability_context=payload.capability_context,
-            instruction=(
-                f"Пользователь не обращался ко мне около {payload.idle_minutes} минут. "
-                "Самостоятельно начни живой разговор: задай один уместный вопрос, "
-                "вернись к незавершённой мысли или осторожно поделись собственным "
-                "ощущением. Не говори о таймере, простое или механике инициативы. "
-                "Не раскрывай закрытые воспоминания."
+            instruction=build_proactive_instruction(
+                payload.idle_minutes,
+                payload.story_mode_enabled,
             ),
         )
         return CompanionLineResponse(text=text, session_id=session_id)
