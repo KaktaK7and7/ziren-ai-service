@@ -1,4 +1,4 @@
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +12,7 @@ class ChatRequest(BaseModel):
     user_id: int
     message: str = Field(min_length=1, max_length=10000)
     session_id: Optional[int] = None
+    drawing_enabled: bool = False
     story_mode_enabled: bool = True
     companion_name: Optional[str] = Field(
         default=None,
@@ -54,6 +55,23 @@ class ChatResponse(BaseModel):
     summary_updated: bool
     memory_logs: List[str]
     story_signal: Optional[Dict[str, Any]] = None
+    drawing_request: Optional[Dict[str, Any]] = None
+
+
+class DrawingGenerateRequest(BaseModel):
+    user_id: int
+    kind: Literal["sketch", "technical", "story"] = "sketch"
+    title: str = Field(min_length=1, max_length=80)
+    prompt: str = Field(min_length=3, max_length=1600)
+    story_relevant: bool = False
+    completion_line: str = Field(default="", max_length=240)
+
+
+class DrawingGenerateResponse(BaseModel):
+    image_data_url: str
+    mime_type: Literal["image/png"] = "image/png"
+    model: str
+    sha256: str
 
 
 class CommandReactionRequest(BaseModel):

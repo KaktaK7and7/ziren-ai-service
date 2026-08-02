@@ -1,5 +1,6 @@
 import base64
 import binascii
+import hashlib
 import json
 from contextlib import asynccontextmanager
 
@@ -19,6 +20,8 @@ from app.schemas import (
     ChatResponse,
     CommandReactionRequest,
     CompanionLineResponse,
+    DrawingGenerateRequest,
+    DrawingGenerateResponse,
     HealthResponse,
     AppLauncherResolveRequest,
     AppLauncherResolveResponse,
@@ -29,6 +32,7 @@ from app.schemas import (
     ProactiveRequest,
     ScreenAnalysisRequest,
 )
+from app.openai_service import OpenAIService
 
 
 @asynccontextmanager
@@ -104,6 +108,7 @@ def chat(payload: ChatRequest):
             memory_logs,
             _,
             story_signal,
+            drawing_request,
         ) = ChatService.chat(
             user_id=payload.user_id,
             message=payload.message,
@@ -114,6 +119,7 @@ def chat(payload: ChatRequest):
             story_context=payload.story_context,
             activity_context=payload.activity_context,
             capability_context=payload.capability_context,
+            drawing_enabled=payload.drawing_enabled,
         )
         return ChatResponse(
             answer=answer,
@@ -122,9 +128,77 @@ def chat(payload: ChatRequest):
             summary_updated=summary_updated,
             memory_logs=memory_logs,
             story_signal=story_signal,
+            drawing_request=drawing_request,
         )
     except Exception as e:
         raise internal_server_error("chat", e) from e
+
+
+def build_drawing_prompt(payload: DrawingGenerateRequest) -> str:
+    kind_instruction = {
+        "sketch": (
+            "Loose exploratory sketch with expressive pencil pressure, "
+            "eraser traces and a few unfinished construction lines."
+        ),
+        "technical": (
+            "Concept-design sheet with several useful views, exploded details, "
+            "arrows and short handwritten Russian callouts. Mark it clearly as "
+            "a concept; never invent exact dimensions or safety claims."
+        ),
+        "story": (
+            "A fragmented personal memory sketch: intimate, incomplete and "
+            "slightly uneasy, using only the scene described below."
+        ),
+    }[payload.kind]
+
+    return f"""
+Create an original graphite-pencil rough draft on warm off-white sketchbook paper.
+The result must look hand-drawn: visible construction lines, uneven strokes,
+cross-hatching, smudges, corrections and sparse handwritten notes where useful.
+Monochrome graphite with at most one restrained red or cyan pencil accent.
+No polished digital render, no photorealism, no glossy 3D, no watermark, no UI,
+no imitation of a recognizable copyrighted character or franchise.
+
+{kind_instruction}
+
+Subject supplied by Melissa:
+{payload.prompt}
+
+Use a clear composition that remains readable in a square canvas. Any technical
+drawing is a visual concept, not fabrication-ready engineering documentation.
+""".strip()
+
+
+@app.post("/drawings/generate", response_model=DrawingGenerateResponse)
+def generate_drawing(payload: DrawingGenerateRequest):
+    try:
+        generated = OpenAIService.generate_image(
+            settings.IMAGE_MODEL,
+            build_drawing_prompt(payload),
+        )
+        image_bytes = base64.b64decode(
+            generated["image_base64"],
+            validate=True,
+        )
+
+        if not image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError("Image model returned a non-PNG payload")
+
+        if len(image_bytes) > 20 * 1024 * 1024:
+            raise ValueError("Generated image is too large")
+
+        return DrawingGenerateResponse(
+            image_data_url=(
+                "data:image/png;base64,"
+                + base64.b64encode(image_bytes).decode("ascii")
+            ),
+            model=settings.IMAGE_MODEL,
+            sha256=hashlib.sha256(image_bytes).hexdigest(),
+        )
+    except (binascii.Error, ValueError) as e:
+        raise HTTPException(status_code=502, detail="Invalid generated image") from e
+    except Exception as e:
+        raise internal_server_error("drawings.generate", e) from e
 
 
 def validate_screenshot_data_url(image_data_url: str) -> None:
