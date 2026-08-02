@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from app.chat_service import ChatService
+from app.proactive_prompt import build_proactive_instruction
 
 
 class StoryRoleTests(unittest.TestCase):
@@ -41,6 +42,8 @@ class StoryRoleTests(unittest.TestCase):
         self.assertIn("не утверждай, что видишь экран", prompt)
         self.assertIn("находчивая, дерзкая, наблюдательная", prompt)
         self.assertIn("старый preset личности игнорируется", prompt)
+        self.assertIn("отвечаешь за половину движения вперёд", prompt)
+        self.assertIn("обычные английские слова пиши кириллицей", prompt)
         self.assertNotIn("очень мягкий", prompt)
         self.assertNotIn("всегда соглашайся", prompt)
 
@@ -106,6 +109,29 @@ class StoryRoleTests(unittest.TestCase):
                 enforce_story_voice=True,
             ),
         )
+        self.assertTrue(
+            ChatService.breaks_companion_role(
+                "Я Мелисса, твоя цифровая компаньонка.",
+                enforce_story_voice=True,
+            ),
+        )
+        self.assertTrue(
+            ChatService.breaks_companion_role(
+                "Я не реальный человек, но могу помочь.",
+                enforce_story_voice=True,
+            ),
+        )
+
+    def test_story_proactive_instruction_requires_a_concrete_move(self) -> None:
+        instruction = build_proactive_instruction(
+            idle_minutes=12,
+            story_mode_enabled=True,
+        )
+
+        self.assertIn("Не ограничивайся вопросом", instruction)
+        self.assertIn("дай пользователю понятную задачу", instruction)
+        self.assertIn("потребуй решение", instruction)
+        self.assertIn("текущая цель", instruction)
 
     def test_plain_mode_can_answer_nature_question_without_story_retry(self) -> None:
         self.assertFalse(
