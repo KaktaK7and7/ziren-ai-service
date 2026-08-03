@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from app.chat_service import ChatService
+from app.schemas import ScreenActionProposal, ScreenAnalysisPlan
 from app.proactive_prompt import build_proactive_instruction
 
 
@@ -330,7 +331,7 @@ class StoryRoleTests(unittest.TestCase):
             {
                 "type": "input_image",
                 "image_url": "data:image/jpeg;base64,/9j/test",
-                "detail": "auto",
+                "detail": "high",
             },
         )
         self.assertIn(
@@ -338,9 +339,59 @@ class StoryRoleTests(unittest.TestCase):
             messages[-2]["content"],
         )
         self.assertIn(
-            "не утверждай, что\nпродолжаешь видеть экран",
-            messages[-2]["content"],
+            "не утверждай, что продолжаешь видеть экран",
+            " ".join(messages[-2]["content"].split()),
         )
+
+    def test_screen_plan_clips_boxes_and_rejects_unlinked_clicks(self) -> None:
+        plan = ChatService.normalize_screen_analysis_plan({
+            "answer": "Я отметила нужную область.",
+            "mode": "annotate",
+            "annotations": [{
+                "id": "target",
+                "label": "Нужная кнопка",
+                "kind": "target",
+                "x": 0.8,
+                "y": 0.7,
+                "width": 0.4,
+                "height": 0.2,
+                "step": 0,
+            }],
+            "action": {
+                "type": "click",
+                "target_id": "missing",
+                "label": "Нужная кнопка",
+                "risk": "safe",
+                "reason": "",
+            },
+        })
+
+        self.assertAlmostEqual(plan.annotations[0].width, 0.2)
+        self.assertEqual(plan.action.type, "none")
+        self.assertEqual(plan.action.risk, "blocked")
+
+    def test_screen_plan_falls_back_without_exposing_an_unvalidated_action(
+        self,
+    ) -> None:
+        with (
+            patch(
+                "app.chat_service.OpenAIService.generate_structured",
+                side_effect=ValueError("bad plan"),
+            ),
+            patch.object(
+                ChatService,
+                "generate_role_safe_reply",
+                return_value=("Я вижу окно, но разметка не загрузилась.", None, None),
+            ),
+        ):
+            plan = ChatService.generate_screen_analysis_plan(
+                [{"role": "user", "content": "Что на экране?"}],
+                story_mode_enabled=True,
+            )
+
+        self.assertEqual(plan.annotations, [])
+        self.assertEqual(plan.action.type, "none")
+        self.assertIn("разметка", plan.action.reason.lower())
 
     def test_screen_image_is_not_written_to_chat_or_long_term_memory(self) -> None:
         image_data_url = "data:image/jpeg;base64,/9j/test-sensitive-image"
@@ -364,22 +415,32 @@ class StoryRoleTests(unittest.TestCase):
             patch.object(ChatService, "get_recent_messages", return_value=[]),
             patch.object(
                 ChatService,
-                "generate_role_safe_reply",
-                return_value=(
-                    "Нажми кнопку «Продолжить» справа.",
-                    None,
-                    None,
+                "generate_screen_analysis_plan",
+                return_value=ScreenAnalysisPlan(
+                    answer="Нажми кнопку «Продолжить» справа.",
+                    mode="guide",
+                    annotations=[],
+                    action=ScreenActionProposal(
+                        type="none",
+                        target_id="",
+                        label="",
+                        risk="blocked",
+                        reason="",
+                    ),
                 ),
             ),
             patch.object(ChatService, "save_message") as save_message,
         ):
-            answer, session_id = ChatService.analyze_screen(
+            plan, session_id = ChatService.analyze_screen(
                 user_id=7,
                 message="Что мне нажать в этом окне?",
                 image_data_url=image_data_url,
             )
 
-        self.assertEqual(answer, "Нажми кнопку «Продолжить» справа.")
+        self.assertEqual(
+            plan.answer,
+            "Нажми кнопку «Продолжить» справа.",
+        )
         self.assertEqual(session_id, 21)
         saved_values = [
             argument

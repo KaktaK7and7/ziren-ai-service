@@ -12,6 +12,61 @@ client = OpenAI(
 
 class OpenAIService:
     @staticmethod
+    def _response_text(response: Any) -> str:
+        text = getattr(response, "output_text", None)
+        if text:
+            return str(text).strip()
+
+        parts = []
+        try:
+            for item in response.output:
+                if getattr(item, "type", None) == "message":
+                    for content in getattr(item, "content", []):
+                        if getattr(content, "type", None) == "output_text":
+                            parts.append(content.text)
+        except Exception:
+            pass
+
+        return "\n".join(parts).strip()
+
+    @staticmethod
+    def generate_structured(
+        model: str,
+        messages: list[dict],
+        schema_name: str,
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        print("[OpenAI][STRUCTURED] sending request...")
+        print(f"[OpenAI][STRUCTURED] model={model}")
+        print(f"[OpenAI][STRUCTURED] schema={schema_name}")
+
+        response = client.responses.create(
+            model=model,
+            input=messages,
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": schema_name,
+                    "strict": True,
+                    "schema": schema,
+                },
+            },
+        )
+
+        text = OpenAIService._response_text(response)
+        if not text:
+            raise RuntimeError("Structured model returned no text")
+
+        import json
+
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            raise RuntimeError("Structured model returned a non-object")
+
+        print("[OpenAI][STRUCTURED] response received")
+        return data
+
+    @staticmethod
     def generate_json(model: str, messages: list[dict]) -> dict:
         print("[OpenAI][JSON] sending request...")
         print(f"[OpenAI][JSON] model={model}")
@@ -59,21 +114,7 @@ class OpenAIService:
 
         print("[OpenAI] response received")
 
-        text = getattr(response, "output_text", None)
-        if text:
-            return text.strip()
-
-        parts = []
-        try:
-            for item in response.output:
-                if getattr(item, "type", None) == "message":
-                    for content in getattr(item, "content", []):
-                        if getattr(content, "type", None) == "output_text":
-                            parts.append(content.text)
-        except Exception:
-            pass
-
-        return "\n".join(parts).strip()
+        return OpenAIService._response_text(response)
 
     @staticmethod
     def generate_image(model: str, prompt: str) -> dict[str, Any]:
