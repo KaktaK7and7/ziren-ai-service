@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from app.chat_service import ChatService
-from app.schemas import ScreenActionProposal, ScreenAnalysisPlan
+from app.schemas import ScreenActionProposal, ScreenAnalysisPlan, ScreenAnnotation
 from app.proactive_prompt import build_proactive_instruction
 
 
@@ -342,6 +342,18 @@ class StoryRoleTests(unittest.TestCase):
             "не утверждай, что продолжаешь видеть экран",
             " ".join(messages[-2]["content"].split()),
         )
+        self.assertIn(
+            "служебная координатная сетка",
+            " ".join(messages[-2]["content"].split()),
+        )
+        self.assertIn(
+            "Приложение умеет физически выполнить один клик",
+            " ".join(messages[-2]["content"].split()),
+        )
+        self.assertIn(
+            "явная команда уже является разрешением",
+            " ".join(messages[-2]["content"].split()),
+        )
 
     def test_screen_plan_clips_boxes_and_rejects_unlinked_clicks(self) -> None:
         plan = ChatService.normalize_screen_analysis_plan({
@@ -369,6 +381,102 @@ class StoryRoleTests(unittest.TestCase):
         self.assertAlmostEqual(plan.annotations[0].width, 0.2)
         self.assertEqual(plan.action.type, "none")
         self.assertEqual(plan.action.risk, "blocked")
+
+    def test_explicit_safe_click_repairs_a_unique_model_target(self) -> None:
+        plan = ScreenAnalysisPlan(
+            answer="Нажми сам на свой ник.",
+            mode="guide",
+            annotations=[ScreenAnnotation(
+                id="profile",
+                label="Кнопка профиля Как_так?",
+                kind="target",
+                x=0.75,
+                y=0.1,
+                width=0.12,
+                height=0.06,
+                step=0,
+            )],
+            action=ScreenActionProposal(
+                type="none",
+                target_id="",
+                label="Профиль",
+                risk="blocked",
+                reason="",
+            ),
+        )
+
+        repaired = ChatService.ensure_explicit_screen_click(
+            plan,
+            "нажми на мой профиль и ник",
+        )
+
+        self.assertEqual(repaired.action.type, "click")
+        self.assertEqual(repaired.action.target_id, "profile")
+        self.assertEqual(repaired.action.risk, "safe")
+        self.assertIn("нажимаю", repaired.answer.lower())
+        self.assertNotIn("не могу", repaired.answer.lower())
+
+    def test_explicit_risky_click_stays_blocked(self) -> None:
+        plan = ScreenAnalysisPlan(
+            answer="Удалить?",
+            mode="guide",
+            annotations=[ScreenAnnotation(
+                id="delete",
+                label="Удалить аккаунт",
+                kind="target",
+                x=0.75,
+                y=0.1,
+                width=0.12,
+                height=0.06,
+                step=0,
+            )],
+            action=ScreenActionProposal(
+                type="click",
+                target_id="delete",
+                label="Удалить аккаунт",
+                risk="safe",
+                reason="",
+            ),
+        )
+
+        repaired = ChatService.ensure_explicit_screen_click(
+            plan,
+            "нажми удалить аккаунт",
+        )
+
+        self.assertEqual(repaired.action.type, "none")
+        self.assertEqual(repaired.action.risk, "blocked")
+
+    def test_explicit_click_does_not_use_an_oversized_target(self) -> None:
+        plan = ScreenAnalysisPlan(
+            answer="Вот нужный раздел.",
+            mode="guide",
+            annotations=[ScreenAnnotation(
+                id="whole-screen",
+                label="Профиль",
+                kind="target",
+                x=0.05,
+                y=0.05,
+                width=0.8,
+                height=0.7,
+                step=0,
+            )],
+            action=ScreenActionProposal(
+                type="click",
+                target_id="whole-screen",
+                label="Профиль",
+                risk="safe",
+                reason="",
+            ),
+        )
+
+        repaired = ChatService.ensure_explicit_screen_click(
+            plan,
+            "нажми на мой профиль",
+        )
+
+        self.assertEqual(repaired.action.type, "none")
+        self.assertEqual(repaired.action.risk, "blocked")
 
     def test_screen_plan_falls_back_without_exposing_an_unvalidated_action(
         self,
