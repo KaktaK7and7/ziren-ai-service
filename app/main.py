@@ -31,6 +31,7 @@ from app.schemas import (
     PersonaPresetRequest,
     ProactiveRequest,
     ScreenAnalysisRequest,
+    ScreenAnalysisResponse,
 )
 from app.openai_service import OpenAIService
 
@@ -219,12 +220,12 @@ def validate_screenshot_data_url(image_data_url: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid JPEG screenshot")
 
 
-@app.post("/vision", response_model=ChatResponse)
+@app.post("/vision", response_model=ScreenAnalysisResponse)
 def analyze_screen(payload: ScreenAnalysisRequest):
     validate_screenshot_data_url(payload.image_data_url)
 
     try:
-        answer, session_id = ChatService.analyze_screen(
+        plan, session_id = ChatService.analyze_screen(
             user_id=payload.user_id,
             message=payload.message,
             image_data_url=payload.image_data_url,
@@ -236,13 +237,16 @@ def analyze_screen(payload: ScreenAnalysisRequest):
             activity_context=payload.activity_context,
             capability_context=payload.capability_context,
         )
-        return ChatResponse(
-            answer=answer,
+        return ScreenAnalysisResponse(
+            answer=plan.answer,
             session_id=session_id,
             memory_updated=False,
             summary_updated=False,
             memory_logs=[],
             story_signal=None,
+            mode=plan.mode,
+            annotations=plan.annotations,
+            action=plan.action,
         )
     except Exception as e:
         raise internal_server_error("vision", e) from e

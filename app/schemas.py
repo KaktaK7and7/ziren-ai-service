@@ -48,6 +48,37 @@ class ScreenAnalysisRequest(BaseModel):
     capability_context: Optional[str] = Field(default=None, max_length=5000)
 
 
+class ScreenAnnotation(BaseModel):
+    id: str = Field(min_length=1, max_length=40)
+    label: str = Field(min_length=1, max_length=100)
+    kind: Literal["target", "step", "text", "warning"]
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+    step: int = Field(ge=0, le=8)
+
+
+class ScreenActionProposal(BaseModel):
+    type: Literal["none", "click"]
+    target_id: str = Field(default="", max_length=40)
+    label: str = Field(default="", max_length=100)
+    risk: Literal["safe", "blocked"]
+    reason: str = Field(default="", max_length=240)
+
+
+class ScreenAnalysisPlan(BaseModel):
+    answer: str = Field(min_length=1, max_length=5000)
+    mode: Literal[
+        "explain",
+        "translate",
+        "guide",
+        "annotate",
+    ]
+    annotations: List[ScreenAnnotation] = Field(max_length=8)
+    action: ScreenActionProposal
+
+
 class ChatResponse(BaseModel):
     answer: str
     session_id: int
@@ -56,6 +87,17 @@ class ChatResponse(BaseModel):
     memory_logs: List[str]
     story_signal: Optional[Dict[str, Any]] = None
     drawing_request: Optional[Dict[str, Any]] = None
+
+
+class ScreenAnalysisResponse(ChatResponse):
+    mode: Literal[
+        "explain",
+        "translate",
+        "guide",
+        "annotate",
+    ]
+    annotations: List[ScreenAnnotation] = Field(default_factory=list, max_length=8)
+    action: ScreenActionProposal
 
 
 class DrawingGenerateRequest(BaseModel):
