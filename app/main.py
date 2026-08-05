@@ -34,6 +34,10 @@ from app.schemas import (
     ScreenAnalysisResponse,
 )
 from app.openai_service import OpenAIService
+from app.transient_screen_analysis import (
+    analyze_screen_without_history,
+    is_transient_screen_retry,
+)
 
 
 @asynccontextmanager
@@ -97,6 +101,7 @@ def update_name(user_id: int, payload: PersonaNameRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise internal_server_error("persona.name", e) from e
+
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest):
@@ -225,7 +230,12 @@ def analyze_screen(payload: ScreenAnalysisRequest):
     validate_screenshot_data_url(payload.image_data_url)
 
     try:
-        plan, session_id = ChatService.analyze_screen(
+        analysis_handler = (
+            analyze_screen_without_history
+            if is_transient_screen_retry(payload.message)
+            else ChatService.analyze_screen
+        )
+        plan, session_id = analysis_handler(
             user_id=payload.user_id,
             message=payload.message,
             image_data_url=payload.image_data_url,
