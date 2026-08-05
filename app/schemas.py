@@ -1,6 +1,6 @@
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 DeliveredCompanionLine = Annotated[
     str,
@@ -57,6 +57,37 @@ class ScreenAnnotation(BaseModel):
     width: float = Field(gt=0, le=1)
     height: float = Field(gt=0, le=1)
     step: int = Field(ge=0, le=8)
+    confidence: Optional[float] = Field(default=None, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def estimate_missing_confidence(self) -> "ScreenAnnotation":
+        """Estimate box quality when the vision schema predates confidence."""
+        if self.confidence is not None:
+            return self
+
+        if self.kind in {"text", "warning"}:
+            self.confidence = 1.0
+            return self
+
+        area = self.width * self.height
+        label_tokens = [
+            token
+            for token in self.label.split()
+            if len(token.strip("'\".,!?()[]{}")) >= 3
+        ]
+        if not label_tokens:
+            confidence = 0.55
+        elif area <= 0.02:
+            confidence = 0.92
+        elif area <= 0.08:
+            confidence = 0.86
+        elif area <= 0.18:
+            confidence = 0.74
+        else:
+            confidence = 0.55
+
+        self.confidence = confidence
+        return self
 
 
 class ScreenActionProposal(BaseModel):
