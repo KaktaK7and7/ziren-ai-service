@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +20,20 @@ class ChatResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     app: str
+
+
+class CommandRouteRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    capabilities: List[dict[str, Any]] = Field(default_factory=list, max_length=80)
+
+
+class CommandRouteResponse(BaseModel):
+    matched: bool = False
+    feature_id: str = ""
+    action_id: str = ""
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    reason: str = ""
 
 
 class AppLauncherCandidate(BaseModel):
