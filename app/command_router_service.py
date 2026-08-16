@@ -101,19 +101,30 @@ class CommandRouterService:
 
     @staticmethod
     def _validate_result(raw: object, catalog: list[dict[str, Any]]) -> CommandRouteResponse:
-        if not isinstance(raw, dict):
+        if (
+            not isinstance(raw, dict)
+            or "command_like" not in raw
+            or not isinstance(raw.get("command_like"), bool)
+        ):
             return CommandRouteResponse(
                 matched=False,
                 command_like=False,
                 reason="system: invalid classifier response",
             )
 
-        command_like = raw.get("command_like") is True
+        command_like = raw["command_like"]
         if not command_like:
             return CommandRouteResponse(
                 matched=False,
                 command_like=False,
                 reason=_reason("chat", raw.get("reason"), "ordinary conversation"),
+            )
+
+        if "matched" not in raw or not isinstance(raw.get("matched"), bool):
+            return CommandRouteResponse(
+                matched=False,
+                command_like=False,
+                reason="system: invalid classifier response",
             )
 
         feature_id = str(raw.get("feature_id") or "").strip()
@@ -124,7 +135,7 @@ class CommandRouterService:
             confidence = 0.0
         confidence = max(0.0, min(1.0, confidence))
 
-        if raw.get("matched") is not True:
+        if raw["matched"] is not True:
             return CommandRouteResponse(
                 matched=False,
                 command_like=True,
