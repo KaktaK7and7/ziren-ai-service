@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 
 from app.chat_service import ChatService
 from app.app_launcher_service import AppLauncherService
+from app.command_router_service import CommandRouterService
 from app.config import settings
 from app.persona_service import PersonaService
 from app.memory_service import MemoryService
@@ -9,6 +10,8 @@ from app.schemas import (
     ChatRequest,
     ChatResponse,
     HealthResponse,
+    CommandRouteRequest,
+    CommandRouteResponse,
     AppLauncherResolveRequest,
     AppLauncherResolveResponse,
     MemoryItemCreateRequest,
@@ -49,6 +52,14 @@ def chat(payload: ChatRequest):
             summary_updated=summary_updated,
             memory_logs=memory_logs,
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/command-route", response_model=CommandRouteResponse)
+def command_route(payload: CommandRouteRequest):
+    try:
+        return CommandRouterService.resolve(payload)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
