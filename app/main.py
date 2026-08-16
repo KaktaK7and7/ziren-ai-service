@@ -1,7 +1,11 @@
-from fastapi import FastAPI, HTTPException
+import secrets
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from app.chat_service import ChatService
 from app.app_launcher_service import AppLauncherService
+from app.command_router_service import CommandRouterService
 from app.config import settings
 from app.persona_service import PersonaService
 from app.memory_service import MemoryService
@@ -9,6 +13,8 @@ from app.schemas import (
     ChatRequest,
     ChatResponse,
     HealthResponse,
+    CommandRouteRequest,
+    CommandRouteResponse,
     AppLauncherResolveRequest,
     AppLauncherResolveResponse,
     MemoryItemCreateRequest,
@@ -18,6 +24,28 @@ from app.schemas import (
 
 
 app = FastAPI(title=settings.APP_NAME)
+
+
+@app.middleware("http")
+async def require_internal_gateway_token(request: Request, call_next):
+    if request.url.path == "/health":
+        return await call_next(request)
+
+    configured = settings.AI_INTERNAL_TOKEN
+    if not configured:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "AI internal gateway token is not configured"},
+        )
+
+    supplied = str(request.headers.get("X-Ziren-Internal-Token") or "")
+    if not supplied or not secrets.compare_digest(supplied, configured):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid internal gateway token"},
+        )
+
+    return await call_next(request)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -34,6 +62,7 @@ def update_name(user_id: int, data: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest):
     try:
@@ -49,6 +78,14 @@ def chat(payload: ChatRequest):
             summary_updated=summary_updated,
             memory_logs=memory_logs,
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/command-route", response_model=CommandRouteResponse)
+def command_route(payload: CommandRouteRequest):
+    try:
+        return CommandRouterService.resolve(payload)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
