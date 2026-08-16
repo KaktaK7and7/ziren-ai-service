@@ -77,7 +77,7 @@ class MemoryItemCreateRequest(BaseModel):
 class MemoryItemUpdateRequest(BaseModel):
     type: Optional[str] = Field(default=None, min_length=1, max_length=50)
     category: Optional[str] = Field(default=None, min_length=1, max_length=100)
-    content: Optional[str] = Field(default=None, max_length=10000)
+    content: Optional[str] = Field(default=None, min_length=1, max_length=10000)
     source_message: Optional[str] = Field(default=None, max_length=10000)
     importance: Optional[float] = Field(default=None, ge=0, le=1)
     confidence: Optional[float] = Field(default=None, ge=0, le=1)
