@@ -26,6 +26,11 @@ ALLOWED_ARGUMENT_KEYS = {
 }
 
 
+def _reason(prefix: str, value: object, fallback: str) -> str:
+    text = " ".join(str(value or fallback).split())[:280]
+    return f"{prefix}: {text}"[:300]
+
+
 class CommandRouterService:
     @staticmethod
     def resolve(payload: CommandRouteRequest) -> CommandRouteResponse:
@@ -34,7 +39,7 @@ class CommandRouterService:
             return CommandRouteResponse(
                 matched=False,
                 command_like=False,
-                reason="empty capability catalog",
+                reason="system: empty capability catalog",
             )
 
         system_prompt = (
@@ -100,7 +105,7 @@ class CommandRouterService:
             return CommandRouteResponse(
                 matched=False,
                 command_like=False,
-                reason="invalid classifier response",
+                reason="system: invalid classifier response",
             )
 
         command_like = raw.get("command_like") is True
@@ -108,7 +113,7 @@ class CommandRouterService:
             return CommandRouteResponse(
                 matched=False,
                 command_like=False,
-                reason=str(raw.get("reason") or "ordinary conversation")[:300],
+                reason=_reason("chat", raw.get("reason"), "ordinary conversation"),
             )
 
         feature_id = str(raw.get("feature_id") or "").strip()
@@ -124,7 +129,11 @@ class CommandRouterService:
                 matched=False,
                 command_like=True,
                 confidence=confidence,
-                reason=str(raw.get("reason") or "command has no safe capability match")[:300],
+                reason=_reason(
+                    "command",
+                    raw.get("reason"),
+                    "no safe capability match",
+                ),
             )
 
         allowed_pairs = {
@@ -137,7 +146,7 @@ class CommandRouterService:
                 matched=False,
                 command_like=True,
                 confidence=confidence,
-                reason="low confidence or action is outside capability catalog",
+                reason="command: low confidence or action is outside capability catalog",
             )
 
         raw_arguments = raw.get("arguments")
@@ -156,5 +165,5 @@ class CommandRouterService:
             action_id=action_id,
             arguments=arguments,
             confidence=confidence,
-            reason=str(raw.get("reason") or "")[:300],
+            reason=_reason("command", raw.get("reason"), "matched safe capability"),
         )
