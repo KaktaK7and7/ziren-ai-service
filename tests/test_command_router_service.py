@@ -140,6 +140,31 @@ class CommandRouterServiceTests(unittest.TestCase):
         self.assertEqual(result.arguments, {})
         self.assertTrue(result.reason.startswith("chat:"))
 
+    def test_missing_command_like_is_service_failure_not_chat(self):
+        result = self._resolve(
+            {
+                "should_save": False,
+                "items": [],
+            }
+        )
+        self.assertFalse(result.matched)
+        self.assertFalse(result.command_like)
+        self.assertTrue(result.reason.startswith("system:"))
+
+    def test_non_boolean_command_like_is_service_failure(self):
+        result = self._resolve(
+            {
+                "command_like": "true",
+                "matched": True,
+                "feature_id": "system.text_input",
+                "action_id": "text.type",
+                "confidence": 1.0,
+            }
+        )
+        self.assertFalse(result.matched)
+        self.assertFalse(result.command_like)
+        self.assertTrue(result.reason.startswith("system:"))
+
 
 if __name__ == "__main__":
     unittest.main()
