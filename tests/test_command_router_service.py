@@ -121,6 +121,25 @@ class CommandRouterServiceTests(unittest.TestCase):
         self.assertFalse(result.matched)
         self.assertTrue(result.reason.startswith("chat:"))
 
+    def test_chat_classification_wins_over_inconsistent_matched_fields(self):
+        result = self._resolve(
+            {
+                "command_like": False,
+                "matched": True,
+                "feature_id": "system.volume",
+                "action_id": "volume.set",
+                "arguments": {"percent": 100},
+                "confidence": 0.99,
+                "reason": "ordinary conversation",
+            }
+        )
+        self.assertFalse(result.command_like)
+        self.assertFalse(result.matched)
+        self.assertEqual(result.feature_id, "")
+        self.assertEqual(result.action_id, "")
+        self.assertEqual(result.arguments, {})
+        self.assertTrue(result.reason.startswith("chat:"))
+
 
 if __name__ == "__main__":
     unittest.main()
