@@ -31,18 +31,28 @@ class CommandRouterService:
     def resolve(payload: CommandRouteRequest) -> CommandRouteResponse:
         catalog = CommandRouterService._sanitize_catalog(payload.capabilities)
         if not catalog:
-            return CommandRouteResponse(matched=False, reason="empty capability catalog")
+            return CommandRouteResponse(
+                matched=False,
+                command_like=False,
+                reason="empty capability catalog",
+            )
 
         system_prompt = (
-            "Ты — только классификатор локальных команд Windows для Ziren. "
+            "Ты — только классификатор локальных команд Windows и функций Ziren. "
             "Никогда не отвечай пользователю разговорным текстом и никогда не утверждай, "
-            "что действие выполнено. Выбирай действие ТОЛЬКО из переданного каталога. "
-            "Если сообщение является обычным разговором, вопросом или ты не уверена — matched=false. "
-            "Не придумывай feature_id/action_id. Не генерируй shell, PowerShell, CMD, пути или сочетания клавиш. "
-            "Аргументы извлекай только из текста пользователя. Для ввода текста используй arguments.text; "
-            "для окон arguments.target; для процентов arguments.percent. "
-            "Верни только JSON: {matched:boolean, feature_id:string, action_id:string, arguments:object, "
-            "confidence:number, reason:string}. Confidence ниже 0.78 означает matched=false."
+            "что действие выполнено. Сначала определи command_like: true, если пользователь "
+            "просит управлять компьютером, приложением, окном, файлами, мультимедиа, расписанием "
+            "или другой функцией Ziren; false, если это обычный разговор, вопрос, мнение или просьба "
+            "объяснить что-либо без выполнения действия. Если command_like=false, matched=false. "
+            "Если command_like=true, выбирай действие ТОЛЬКО из переданного каталога. "
+            "Если подходящего действия нет или ты не уверена — matched=false, но command_like=true. "
+            "Не придумывай feature_id/action_id. Не генерируй shell, PowerShell, CMD, пути или "
+            "произвольные сочетания клавиш. Аргументы извлекай только из текста пользователя. "
+            "Для ввода текста используй arguments.text; для окон и приложений arguments.target; "
+            "для процентов arguments.percent; для номера монитора arguments.monitor. "
+            "Верни только JSON: {command_like:boolean, matched:boolean, feature_id:string, "
+            "action_id:string, arguments:object, confidence:number, reason:string}. "
+            "Confidence ниже 0.78 означает matched=false."
         )
         user_payload = {
             "message": payload.message,
@@ -86,8 +96,20 @@ class CommandRouterService:
 
     @staticmethod
     def _validate_result(raw: object, catalog: list[dict[str, Any]]) -> CommandRouteResponse:
-        if not isinstance(raw, dict) or raw.get("matched") is not True:
-            return CommandRouteResponse(matched=False, reason="no semantic command match")
+        if not isinstance(raw, dict):
+            return CommandRouteResponse(
+                matched=False,
+                command_like=False,
+                reason="invalid classifier response",
+            )
+
+        command_like = raw.get("command_like") is True
+        if not command_like:
+            return CommandRouteResponse(
+                matched=False,
+                command_like=False,
+                reason=str(raw.get("reason") or "ordinary conversation")[:300],
+            )
 
         feature_id = str(raw.get("feature_id") or "").strip()
         action_id = str(raw.get("action_id") or "").strip()
@@ -97,6 +119,14 @@ class CommandRouterService:
             confidence = 0.0
         confidence = max(0.0, min(1.0, confidence))
 
+        if raw.get("matched") is not True:
+            return CommandRouteResponse(
+                matched=False,
+                command_like=True,
+                confidence=confidence,
+                reason=str(raw.get("reason") or "command has no safe capability match")[:300],
+            )
+
         allowed_pairs = {
             (feature["feature_id"], action["action_id"])
             for feature in catalog
@@ -105,6 +135,7 @@ class CommandRouterService:
         if confidence < 0.78 or (feature_id, action_id) not in allowed_pairs:
             return CommandRouteResponse(
                 matched=False,
+                command_like=True,
                 confidence=confidence,
                 reason="low confidence or action is outside capability catalog",
             )
@@ -120,6 +151,7 @@ class CommandRouterService:
 
         return CommandRouteResponse(
             matched=True,
+            command_like=True,
             feature_id=feature_id,
             action_id=action_id,
             arguments=arguments,
