@@ -9,6 +9,8 @@ from app.command_router_service import CommandRouterService
 from app.config import settings
 from app.persona_service import PersonaService
 from app.memory_service import MemoryService
+from app.subscription_service import SubscriptionAccessError, SubscriptionService
+from app.usage_context import ai_usage_context
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -48,9 +50,24 @@ async def require_internal_gateway_token(request: Request, call_next):
     return await call_next(request)
 
 
+def _subscription_error(error: SubscriptionAccessError) -> HTTPException:
+    return HTTPException(
+        status_code=error.status_code,
+        detail={"code": error.code, "message": str(error)},
+    )
+
+
 @app.get("/health", response_model=HealthResponse)
 def health():
     return HealthResponse(status="ok", app=settings.APP_NAME)
+
+
+@app.get("/subscription/{user_id}")
+def subscription_status(user_id: int):
+    try:
+        return {"ok": True, "subscription": SubscriptionService.get_status(user_id)}
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
 
 
 @app.post("/persona/{user_id}/name")
@@ -66,11 +83,13 @@ def update_name(user_id: int, data: dict):
 @app.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest):
     try:
-        answer, session_id, memory_updated, summary_updated, memory_logs, _ = ChatService.chat(
-            user_id=payload.user_id,
-            message=payload.message,
-            session_id=payload.session_id,
-        )
+        SubscriptionService.require_ai_access(payload.user_id)
+        with ai_usage_context(payload.user_id, "chat"):
+            answer, session_id, memory_updated, summary_updated, memory_logs, _ = ChatService.chat(
+                user_id=payload.user_id,
+                message=payload.message,
+                session_id=payload.session_id,
+            )
         return ChatResponse(
             answer=answer,
             session_id=session_id,
@@ -78,6 +97,8 @@ def chat(payload: ChatRequest):
             summary_updated=summary_updated,
             memory_logs=memory_logs,
         )
+    except SubscriptionAccessError as error:
+        raise _subscription_error(error)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -85,7 +106,11 @@ def chat(payload: ChatRequest):
 @app.post("/command-route", response_model=CommandRouteResponse)
 def command_route(payload: CommandRouteRequest):
     try:
-        return CommandRouterService.resolve(payload)
+        SubscriptionService.require_ai_access(payload.user_id)
+        with ai_usage_context(payload.user_id, "command_route"):
+            return CommandRouterService.resolve(payload)
+    except SubscriptionAccessError as error:
+        raise _subscription_error(error)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -126,6 +151,9 @@ def get_memory(user_id: int):
 
 @app.post("/app-launcher/resolve", response_model=AppLauncherResolveResponse)
 def app_launcher_resolve(payload: AppLauncherResolveRequest):
+    # This legacy resolver is kept for compatibility. New command routing uses
+    # /command-route and is metered/gated there. The resolver itself never
+    # executes a program; Core still validates and launches local candidates.
     return AppLauncherService.resolve(payload)
 
 
