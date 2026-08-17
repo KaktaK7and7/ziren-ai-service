@@ -4,17 +4,29 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Settings:
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     AI_INTERNAL_TOKEN: str = os.getenv("AI_INTERNAL_TOKEN", "").strip()
 
-    # Основная модель для ответов ассистента
+    # Основная модель для живого диалога Мелиссы.
     MODEL: str = os.getenv("MODEL", "gpt-4.1-mini")
 
-    # Отдельная модель для анализа долгосрочной памяти
-    # Можно оставить такую же, потом заменить на более дешёвую
-    MEMORY_MODEL: str = os.getenv("MEMORY_MODEL", "gpt-4.1-mini")
+    # Дешёвые служебные AI-задачи не должны сжигать бюджет основной модели.
+    COMMAND_ROUTE_MODEL: str = os.getenv("COMMAND_ROUTE_MODEL", "gpt-5-nano")
+    MEMORY_MODEL: str = os.getenv("MEMORY_MODEL", "gpt-5-nano")
+
+    # Пока платёжный checkout не подключён, staging/production можно держать
+    # в beta-режиме. При true Free полностью теряет доступ к облачной Мелиссе,
+    # но локальная Змея продолжает работать без AI-service.
+    SUBSCRIPTIONS_ENFORCED: bool = _env_bool("SUBSCRIPTIONS_ENFORCED", False)
 
     APP_NAME: str = os.getenv("APP_NAME", "ziren-ai-service")
 
