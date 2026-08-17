@@ -98,6 +98,22 @@ def usage_from_response(response: Any) -> AiUsage:
     )
 
 
+def monthly_quota_window(now: datetime) -> tuple[datetime, datetime]:
+    """Return the UTC calendar-month window used by all paid plans.
+
+    Billing can be monthly or annual, but included AI resource refreshes each
+    calendar month. This avoids giving an annual subscriber only one monthly
+    allowance for the entire year and makes the reset date predictable.
+    """
+    current = now.astimezone(timezone.utc)
+    start = datetime(current.year, current.month, 1, tzinfo=timezone.utc)
+    if current.month == 12:
+        end = datetime(current.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        end = datetime(current.year, current.month + 1, 1, tzinfo=timezone.utc)
+    return start, end
+
+
 class SubscriptionService:
     _schema_ready = False
 
@@ -201,7 +217,8 @@ class SubscriptionService:
             else default_budget
         )
 
-        usage_start = period_start or datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        quota_start, quota_end = monthly_quota_window(now)
+        effective_quota_end = min(quota_end, period_end) if period_end else quota_end
         with db_cursor() as cur:
             cur.execute(
                 """
@@ -214,9 +231,9 @@ class SubscriptionService:
                 FROM ai_usage_events
                 WHERE user_id = %s
                   AND created_at >= %s
-                  AND (%s::timestamptz IS NULL OR created_at < %s::timestamptz)
+                  AND created_at < %s
                 """,
-                (user_id, usage_start, period_end, period_end),
+                (user_id, quota_start, effective_quota_end),
             )
             usage = dict(cur.fetchone() or {})
 
@@ -240,6 +257,8 @@ class SubscriptionService:
             "input_tokens": int(usage.get("input_tokens") or 0),
             "cached_input_tokens": int(usage.get("cached_input_tokens") or 0),
             "output_tokens": int(usage.get("output_tokens") or 0),
+            "ai_quota_period_start": quota_start.isoformat(),
+            "ai_quota_period_end": effective_quota_end.isoformat(),
             "current_period_start": period_start.isoformat() if period_start else None,
             "current_period_end": period_end.isoformat() if period_end else None,
             "cancel_at_period_end": cancel_at_period_end,
@@ -257,7 +276,7 @@ class SubscriptionService:
             )
         raise SubscriptionAccessError(
             "ai_budget_exhausted",
-            "AI-ресурс на текущий период израсходован. Локальные команды Змеи продолжают работать.",
+            "AI-ресурс на этот календарный месяц израсходован. Локальные команды Змеи продолжают работать.",
         )
 
     @classmethod
