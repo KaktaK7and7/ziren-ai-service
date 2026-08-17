@@ -1,7 +1,13 @@
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.subscription_service import AiUsage, calculate_cost_microusd, usage_from_response
+from app.subscription_service import (
+    AiUsage,
+    calculate_cost_microusd,
+    monthly_quota_window,
+    usage_from_response,
+)
 
 
 class SubscriptionMeteringTests(unittest.TestCase):
@@ -35,6 +41,19 @@ class SubscriptionMeteringTests(unittest.TestCase):
     def test_unknown_model_never_gets_invented_price(self):
         with self.assertRaises(ValueError):
             calculate_cost_microusd("future-unknown-model", AiUsage(input_tokens=1))
+
+    def test_ai_quota_refreshes_by_calendar_month_even_for_annual_billing(self):
+        start, end = monthly_quota_window(
+            datetime(2026, 8, 17, 23, 59, tzinfo=timezone.utc)
+        )
+        self.assertEqual(start, datetime(2026, 8, 1, tzinfo=timezone.utc))
+        self.assertEqual(end, datetime(2026, 9, 1, tzinfo=timezone.utc))
+
+        start, end = monthly_quota_window(
+            datetime(2026, 12, 31, 12, 0, tzinfo=timezone.utc)
+        )
+        self.assertEqual(start, datetime(2026, 12, 1, tzinfo=timezone.utc))
+        self.assertEqual(end, datetime(2027, 1, 1, tzinfo=timezone.utc))
 
 
 if __name__ == "__main__":
