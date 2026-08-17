@@ -23,6 +23,10 @@ class HealthResponse(BaseModel):
 
 
 class CommandRouteRequest(BaseModel):
+    # The gateway fills this from the authenticated web/desktop session. A
+    # default keeps older internal tests/backfills parseable while production
+    # subscription enforcement rejects unentitled real users at the route.
+    user_id: int = Field(default=0, ge=0)
     message: str = Field(min_length=1, max_length=2000)
     capabilities: List[dict[str, Any]] = Field(default_factory=list, max_length=80)
 
