@@ -1,12 +1,18 @@
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from app.config import settings
 from app.subscription_service import (
     AiUsage,
+    SubscriptionAccessError,
     calculate_cost_microusd,
+    daily_quota_window,
+    estimate_request_cost_ceiling_microusd,
     monthly_quota_window,
     usage_from_response,
+    usage_level,
 )
 
 
@@ -54,6 +60,54 @@ class SubscriptionMeteringTests(unittest.TestCase):
         )
         self.assertEqual(start, datetime(2026, 12, 1, tzinfo=timezone.utc))
         self.assertEqual(end, datetime(2027, 1, 1, tzinfo=timezone.utc))
+
+    def test_daily_safety_window_is_utc_calendar_day(self):
+        start, end = daily_quota_window(
+            datetime(2026, 8, 17, 23, 59, tzinfo=timezone.utc)
+        )
+        self.assertEqual(start, datetime(2026, 8, 17, tzinfo=timezone.utc))
+        self.assertEqual(end, datetime(2026, 8, 18, tzinfo=timezone.utc))
+
+    def test_usage_warning_levels_are_stable(self):
+        self.assertEqual(usage_level(0), "normal")
+        self.assertEqual(usage_level(69), "normal")
+        self.assertEqual(usage_level(70), "warning")
+        self.assertEqual(usage_level(89), "warning")
+        self.assertEqual(usage_level(90), "critical")
+        self.assertEqual(usage_level(99), "critical")
+        self.assertEqual(usage_level(100), "exhausted")
+
+    def test_request_cost_ceiling_is_conservative_and_ignores_media_payload_bytes(self):
+        small_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "объясни экран"},
+                    {
+                        "type": "input_image",
+                        "image_url": "data:image/jpeg;base64," + ("A" * 500_000),
+                    },
+                ],
+            }
+        ]
+        cost, text_chars = estimate_request_cost_ceiling_microusd(
+            "gpt-4.1-mini",
+            small_messages,
+            1000,
+        )
+        self.assertGreater(cost, 0)
+        self.assertLess(text_chars, 100)
+
+    def test_oversized_text_request_is_rejected_before_provider_call(self):
+        with patch.object(settings, "AI_REQUEST_TEXT_CHAR_LIMIT", 8_000):
+            with self.assertRaises(SubscriptionAccessError) as context:
+                estimate_request_cost_ceiling_microusd(
+                    "gpt-4.1-mini",
+                    [{"role": "user", "content": "x" * 8_001}],
+                    1000,
+                )
+        self.assertEqual(context.exception.code, "ai_request_too_large")
+        self.assertEqual(context.exception.status_code, 413)
 
 
 if __name__ == "__main__":
