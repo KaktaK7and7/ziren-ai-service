@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.config import settings
@@ -24,8 +25,8 @@ PLAN_CATALOG = {
 }
 
 # Provider prices per one million text tokens, in USD.
-# Keep this table deliberately small: unknown models are rejected from cost
-# accounting instead of being silently billed at an invented price.
+# Unknown models are intentionally rejected: silently guessing a future model
+# price is how subscription economics drift into the red.
 MODEL_PRICING_USD_PER_MILLION = {
     "gpt-4.1-mini": {
         "input": 0.40,
@@ -37,6 +38,16 @@ MODEL_PRICING_USD_PER_MILLION = {
         "cached_input": 0.005,
         "output": 0.40,
     },
+}
+
+_MEDIA_KEYS = {
+    "image",
+    "image_url",
+    "input_image",
+    "audio",
+    "input_audio",
+    "file",
+    "file_data",
 }
 
 
@@ -56,6 +67,13 @@ class AiUsage:
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
+
+
+@dataclass(frozen=True)
+class AiBudgetReservation:
+    reservation_id: str
+    reserved_microusd: int
+    max_output_tokens: int
 
 
 def _model_family(model: str) -> str | None:
@@ -99,12 +117,7 @@ def usage_from_response(response: Any) -> AiUsage:
 
 
 def monthly_quota_window(now: datetime) -> tuple[datetime, datetime]:
-    """Return the UTC calendar-month window used by all paid plans.
-
-    Billing can be monthly or annual, but included AI resource refreshes each
-    calendar month. This avoids giving an annual subscriber only one monthly
-    allowance for the entire year and makes the reset date predictable.
-    """
+    """Return the UTC calendar-month window used by all paid plans."""
     current = now.astimezone(timezone.utc)
     start = datetime(current.year, current.month, 1, tzinfo=timezone.utc)
     if current.month == 12:
@@ -112,6 +125,75 @@ def monthly_quota_window(now: datetime) -> tuple[datetime, datetime]:
     else:
         end = datetime(current.year, current.month + 1, 1, tzinfo=timezone.utc)
     return start, end
+
+
+def daily_quota_window(now: datetime) -> tuple[datetime, datetime]:
+    current = now.astimezone(timezone.utc)
+    start = datetime(
+        current.year,
+        current.month,
+        current.day,
+        tzinfo=timezone.utc,
+    )
+    return start, start + timedelta(days=1)
+
+
+def usage_level(percent: int) -> str:
+    value = max(0, int(percent))
+    if value >= 100:
+        return "exhausted"
+    if value >= 90:
+        return "critical"
+    if value >= 70:
+        return "warning"
+    return "normal"
+
+
+def _text_character_count(value: Any, *, parent_key: str = "") -> int:
+    """Conservatively count text without treating base64/media as text tokens."""
+    if parent_key.lower() in _MEDIA_KEYS:
+        return 0
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, (list, tuple)):
+        return sum(_text_character_count(item) for item in value)
+    if isinstance(value, dict):
+        total = 0
+        for key, item in value.items():
+            clean_key = str(key).lower()
+            if clean_key in _MEDIA_KEYS:
+                continue
+            total += _text_character_count(item, parent_key=clean_key)
+        return total
+    return 0
+
+
+def estimate_request_cost_ceiling_microusd(
+    model: str,
+    messages: Any,
+    max_output_tokens: int,
+) -> tuple[int, int]:
+    """Return conservative provider-cost ceiling and counted text characters.
+
+    We intentionally use one text character as at most one input token. This is
+    pessimistic for normal Russian/English text and therefore suitable for
+    reserving budget before the provider request. Actual usage replaces the
+    reservation after the response arrives.
+    """
+    text_chars = _text_character_count(messages)
+    if text_chars > settings.AI_REQUEST_TEXT_CHAR_LIMIT:
+        raise SubscriptionAccessError(
+            "ai_request_too_large",
+            "Запрос слишком большой для безопасной обработки. Сократи контекст и попробуй ещё раз.",
+            status_code=413,
+        )
+
+    estimated_usage = AiUsage(
+        input_tokens=text_chars + 256,
+        cached_input_tokens=0,
+        output_tokens=max(1, int(max_output_tokens)),
+    )
+    return calculate_cost_microusd(model, estimated_usage), text_chars
 
 
 class SubscriptionService:
@@ -161,6 +243,25 @@ class SubscriptionService:
                 """
                 CREATE INDEX IF NOT EXISTS idx_ai_usage_user_created
                 ON ai_usage_events(user_id, created_at DESC);
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ai_usage_reservations (
+                    reservation_id VARCHAR(40) PRIMARY KEY,
+                    user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    operation VARCHAR(80) NOT NULL,
+                    model VARCHAR(100) NOT NULL,
+                    reserved_microusd BIGINT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMPTZ NOT NULL
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_ai_reservations_user_expiry
+                ON ai_usage_reservations(user_id, expires_at);
                 """
             )
         cls._schema_ready = True
@@ -219,6 +320,7 @@ class SubscriptionService:
 
         quota_start, quota_end = monthly_quota_window(now)
         effective_quota_end = min(quota_end, period_end) if period_end else quota_end
+        day_start, day_end = daily_quota_window(now)
         with db_cursor() as cur:
             cur.execute(
                 """
@@ -236,6 +338,17 @@ class SubscriptionService:
                 (user_id, quota_start, effective_quota_end),
             )
             usage = dict(cur.fetchone() or {})
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(cost_microusd), 0)::bigint AS cost_microusd
+                FROM ai_usage_events
+                WHERE user_id = %s
+                  AND created_at >= %s
+                  AND created_at < %s
+                """,
+                (user_id, day_start, day_end),
+            )
+            daily_usage = dict(cur.fetchone() or {})
 
         spent = max(0, int(usage.get("cost_microusd") or 0))
         remaining = max(0, budget - spent)
@@ -253,6 +366,8 @@ class SubscriptionService:
             "ai_spent_microusd": spent,
             "ai_remaining_microusd": remaining,
             "ai_usage_percent": percent,
+            "ai_usage_level": usage_level(percent),
+            "ai_daily_spent_microusd": max(0, int(daily_usage.get("cost_microusd") or 0)),
             "requests": int(usage.get("requests") or 0),
             "input_tokens": int(usage.get("input_tokens") or 0),
             "cached_input_tokens": int(usage.get("cached_input_tokens") or 0),
@@ -280,6 +395,191 @@ class SubscriptionService:
         )
 
     @classmethod
+    def reserve_request(
+        cls,
+        *,
+        user_id: int,
+        operation: str,
+        model: str,
+        messages: Any,
+        max_output_tokens: int,
+    ) -> AiBudgetReservation:
+        """Atomically reserve a conservative provider-cost ceiling.
+
+        The per-user PostgreSQL advisory transaction lock prevents concurrent
+        requests from both spending the same remaining subscription budget.
+        """
+        status = cls.require_ai_access(user_id)
+        estimated_cost, _text_chars = estimate_request_cost_ceiling_microusd(
+            model,
+            messages,
+            max_output_tokens,
+        )
+        now = datetime.now(timezone.utc)
+        quota_start, quota_end = monthly_quota_window(now)
+        day_start, day_end = daily_quota_window(now)
+
+        if status["beta_override"] and status["plan"] == "free":
+            monthly_limit = settings.BETA_AI_MONTHLY_SAFETY_BUDGET_MICROUSD
+            daily_limit = settings.BETA_AI_DAILY_SAFETY_BUDGET_MICROUSD
+        else:
+            monthly_limit = max(0, int(status["ai_budget_microusd"]))
+            daily_limit = max(100_000, int(monthly_limit * 0.30))
+
+        per_request_limit = min(
+            250_000,
+            max(50_000, int(monthly_limit * 0.10)),
+        )
+        if estimated_cost > per_request_limit:
+            raise SubscriptionAccessError(
+                "ai_request_budget_limit",
+                "Этот запрос слишком дорогой для одного обращения. Сократи контекст или разбей задачу на несколько шагов.",
+                status_code=429,
+            )
+
+        cls.ensure_schema()
+        reservation_id = uuid.uuid4().hex
+        expires_at = now + timedelta(seconds=settings.AI_RESERVATION_TTL_SECONDS)
+
+        with db_cursor(commit=True) as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (int(user_id),))
+            cur.execute(
+                "DELETE FROM ai_usage_reservations WHERE expires_at <= %s",
+                (now,),
+            )
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(cost_microusd), 0)::bigint AS spent
+                FROM ai_usage_events
+                WHERE user_id = %s AND created_at >= %s AND created_at < %s
+                """,
+                (user_id, quota_start, quota_end),
+            )
+            monthly_spent = int((cur.fetchone() or {}).get("spent") or 0)
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(reserved_microusd), 0)::bigint AS reserved
+                FROM ai_usage_reservations
+                WHERE user_id = %s AND expires_at > %s
+                """,
+                (user_id, now),
+            )
+            active_reserved = int((cur.fetchone() or {}).get("reserved") or 0)
+
+            if monthly_spent + active_reserved + estimated_cost > monthly_limit:
+                code = (
+                    "ai_beta_safety_budget_exhausted"
+                    if status["beta_override"] and status["plan"] == "free"
+                    else "ai_budget_exhausted"
+                )
+                raise SubscriptionAccessError(
+                    code,
+                    "AI-ресурс на текущий период почти исчерпан. Змея и локальные команды продолжают работать.",
+                    status_code=429,
+                )
+
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(cost_microusd), 0)::bigint AS spent
+                FROM ai_usage_events
+                WHERE user_id = %s AND created_at >= %s AND created_at < %s
+                """,
+                (user_id, day_start, day_end),
+            )
+            daily_spent = int((cur.fetchone() or {}).get("spent") or 0)
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(reserved_microusd), 0)::bigint AS reserved
+                FROM ai_usage_reservations
+                WHERE user_id = %s
+                  AND created_at >= %s
+                  AND created_at < %s
+                  AND expires_at > %s
+                """,
+                (user_id, day_start, day_end, now),
+            )
+            daily_reserved = int((cur.fetchone() or {}).get("reserved") or 0)
+            if daily_spent + daily_reserved + estimated_cost > daily_limit:
+                raise SubscriptionAccessError(
+                    "ai_daily_safety_limit",
+                    "На сегодня достигнут защитный лимит облачного AI. Это предотвращает случайный перерасход; локальная Змея продолжает работать.",
+                    status_code=429,
+                )
+
+            cur.execute(
+                """
+                INSERT INTO ai_usage_reservations (
+                    reservation_id, user_id, operation, model,
+                    reserved_microusd, expires_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    reservation_id,
+                    user_id,
+                    str(operation or "ai")[:80],
+                    str(model or "unknown")[:100],
+                    estimated_cost,
+                    expires_at,
+                ),
+            )
+
+        return AiBudgetReservation(
+            reservation_id=reservation_id,
+            reserved_microusd=estimated_cost,
+            max_output_tokens=max_output_tokens,
+        )
+
+    @classmethod
+    def release_reservation(cls, *, user_id: int, reservation_id: str) -> None:
+        if not reservation_id:
+            return
+        cls.ensure_schema()
+        with db_cursor(commit=True) as cur:
+            cur.execute(
+                "DELETE FROM ai_usage_reservations WHERE reservation_id = %s AND user_id = %s",
+                (reservation_id, user_id),
+            )
+
+    @classmethod
+    def finalize_usage(
+        cls,
+        *,
+        user_id: int,
+        reservation_id: str,
+        operation: str,
+        model: str,
+        usage: AiUsage,
+    ) -> int:
+        cls.ensure_schema()
+        cost = calculate_cost_microusd(model, usage)
+        with db_cursor(commit=True) as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (int(user_id),))
+            cur.execute(
+                """
+                INSERT INTO ai_usage_events (
+                    user_id, operation, model, input_tokens,
+                    cached_input_tokens, output_tokens, cost_microusd
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    user_id,
+                    str(operation or "unknown")[:80],
+                    str(model or "unknown")[:100],
+                    usage.input_tokens,
+                    usage.cached_input_tokens,
+                    usage.output_tokens,
+                    cost,
+                ),
+            )
+            cur.execute(
+                "DELETE FROM ai_usage_reservations WHERE reservation_id = %s AND user_id = %s",
+                (reservation_id, user_id),
+            )
+        return cost
+
+    @classmethod
     def record_usage(
         cls,
         *,
@@ -288,6 +588,7 @@ class SubscriptionService:
         model: str,
         usage: AiUsage,
     ) -> int:
+        """Backward-compatible direct metering path for non-reserved callers."""
         cls.ensure_schema()
         cost = calculate_cost_microusd(model, usage)
         with db_cursor(commit=True) as cur:
