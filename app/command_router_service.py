@@ -50,11 +50,14 @@ class CommandRouterService:
             "или другой функцией Ziren; false, если это обычный разговор, вопрос, мнение или просьба "
             "объяснить что-либо без выполнения действия. Если command_like=false, matched=false. "
             "Если command_like=true, выбирай действие ТОЛЬКО из переданного каталога. "
+            "voice_examples — это допустимые разговорные/Vosk-варианты той же функции; используй их "
+            "как подсказки, но не исполняй ничего вне action_id каталога. "
             "Если подходящего действия нет или ты не уверена — matched=false, но command_like=true. "
             "Не придумывай feature_id/action_id. Не генерируй shell, PowerShell, CMD, пути или "
             "произвольные сочетания клавиш. Аргументы извлекай только из текста пользователя. "
-            "Для ввода текста используй arguments.text; для окон и приложений arguments.target; "
-            "для процентов arguments.percent; для номера монитора arguments.monitor. "
+            "Для ввода текста используй arguments.text; для окон, приложений и номера виртуального "
+            "рабочего стола используй arguments.target; для процентов arguments.percent; "
+            "для номера физического монитора arguments.monitor. "
             "Верни только JSON: {command_like:boolean, matched:boolean, feature_id:string, "
             "action_id:string, arguments:object, confidence:number, reason:string}. "
             "Confidence ниже 0.78 означает matched=false."
@@ -64,7 +67,7 @@ class CommandRouterService:
             "capabilities": catalog,
         }
         raw = OpenAIService.generate_json(
-            settings.MODEL,
+            settings.COMMAND_ROUTE_MODEL,
             [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
@@ -81,20 +84,26 @@ class CommandRouterService:
             feature_id = str(feature.get("feature_id") or "").strip()[:100]
             if not feature_id:
                 continue
-            actions: list[dict[str, str]] = []
+            actions: list[dict[str, Any]] = []
             for action in feature.get("actions", [])[:MAX_ACTIONS_PER_FEATURE]:
-                if isinstance(action, dict):
-                    action_id = str(action.get("action_id") or "").strip()[:120]
-                    label = str(action.get("display_name") or action_id).strip()[:160]
-                    argument_hint = str(action.get("argument_hint") or "").strip()[:160]
-                else:
+                if not isinstance(action, dict):
                     continue
-                if action_id:
-                    actions.append({
-                        "action_id": action_id,
-                        "display_name": label,
-                        "argument_hint": argument_hint,
-                    })
+                action_id = str(action.get("action_id") or "").strip()[:120]
+                if not action_id:
+                    continue
+                label = str(action.get("display_name") or action_id).strip()[:160]
+                argument_hint = str(action.get("argument_hint") or "").strip()[:160]
+                voice_examples = [
+                    " ".join(str(example).split())[:100]
+                    for example in (action.get("voice_examples") or [])[:8]
+                    if isinstance(example, str) and example.strip()
+                ]
+                actions.append({
+                    "action_id": action_id,
+                    "display_name": label,
+                    "argument_hint": argument_hint,
+                    "voice_examples": voice_examples,
+                })
             if actions:
                 result.append({"feature_id": feature_id, "actions": actions})
         return result
